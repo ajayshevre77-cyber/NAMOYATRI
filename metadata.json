@@ -1,0 +1,6 @@
+{
+  "name": "Namo Yatri",
+  "description": "Your Companion on Every Yatra. Digital companion and pilgrim mobility platform for Nashik–Trimbakeshwar Simhastha Kumbh 2027.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,434 @@
+{
+  "project": "gen-lang-client-0748280227",
+  "databaseId": "ai-studio-namoyatri-a7101301-1d61-44bb-be98-744f6e020242",
+  "collections": [
+    {
+      "path": "users/{userId}",
+      "description": "User core profile and identity",
+      "fields": {
+        "userId": "string",
+        "displayName": "string",
+        "phoneNumber": "string?",
+        "email": "string?",
+        "profilePhoto": "string?",
+        "preferredLanguage": "string",
+        "role": "string",
+        "verificationStatus": "string",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == userId || isAdmin()",
+        "write": "request.auth.uid == userId && incoming().role == 'TOURIST' && incoming().verificationStatus in ['PENDING', 'UNDER_REVIEW']"
+      }
+    },
+    {
+      "path": "profiles/{userId}",
+      "description": "User privacy settings and preferences",
+      "fields": {
+        "userId": "string",
+        "isProfilePublic": "boolean",
+        "locationSharingMode": "string",
+        "shareContactInEmergency": "boolean",
+        "savedPlaceIds": "array",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == userId || isAdmin()",
+        "write": "request.auth.uid == userId"
+      }
+    },
+    {
+      "path": "places/{placeId}",
+      "description": "Temples, ghats, and pilgrimage venues",
+      "fields": {
+        "id": "string",
+        "name": "map",
+        "category": "string",
+        "description": "map",
+        "sourceType": "string",
+        "sourceName": "string",
+        "verifiedAt": "string?"
+      },
+      "rules": {
+        "read": "true",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "facilities/{facilityId}",
+      "description": "Medical camps, rest areas, drinking water, and parking",
+      "fields": {
+        "id": "string",
+        "name": "string",
+        "category": "string",
+        "status": "string",
+        "location": "map"
+      },
+      "rules": {
+        "read": "true",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "drivers/{driverId}",
+      "description": "Registered driver partner record",
+      "fields": {
+        "driverId": "string",
+        "licenseNumber": "string",
+        "rtoBadge": "string",
+        "vehicleId": "string",
+        "verificationStatus": "string",
+        "fairPricePledge": "boolean",
+        "assignedZone": "string",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == driverId || isAdmin() || isOperations()",
+        "create": "request.auth.uid == driverId && incoming().verificationStatus == 'PENDING'",
+        "update": "isAdmin() || (request.auth.uid == driverId && !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus']))"
+      }
+    },
+    {
+      "path": "vehicles/{vehicleId}",
+      "description": "Driver vehicles registered for Kumbh transport",
+      "fields": {
+        "vehicleId": "string",
+        "driverId": "string",
+        "vehicleType": "string",
+        "registrationNumber": "string",
+        "verificationStatus": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "isSignedIn()",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "volunteers/{volunteerId}",
+      "description": "Kumbh seva volunteer profile and assignments",
+      "fields": {
+        "volunteerId": "string",
+        "assignedZone": "string",
+        "languages": "array",
+        "organization": "string",
+        "verificationStatus": "string",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "isSignedIn()",
+        "create": "request.auth.uid == volunteerId && incoming().verificationStatus == 'PENDING'",
+        "update": "isAdmin() || isOperations() || (request.auth.uid == volunteerId && !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus', 'assignedZone']))"
+      }
+    },
+    {
+      "path": "businesses/{businessId}",
+      "description": "Verified ashrams, dharamshalas, and bhojanalayas",
+      "fields": {
+        "businessId": "string",
+        "ownerId": "string",
+        "businessName": "string",
+        "category": "string",
+        "address": "string",
+        "fairPricePledge": "boolean",
+        "verificationStatus": "string",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "create": "request.auth.uid == incoming().ownerId && incoming().verificationStatus == 'PENDING'",
+        "update": "isAdmin() || (request.auth.uid == existing().ownerId && !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus']))"
+      }
+    },
+    {
+      "path": "passes/{passId}",
+      "description": "Digital pilgrimage transit passes",
+      "fields": {
+        "passId": "string",
+        "userId": "string",
+        "productName": "string",
+        "passTier": "string",
+        "validFrom": "string",
+        "validUntil": "string",
+        "status": "string",
+        "qrTokenHash": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin() || isOperations()",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "passUsages/{usageId}",
+      "description": "Conductor QR scan redemption events",
+      "fields": {
+        "usageId": "string",
+        "passId": "string",
+        "userId": "string",
+        "scannedByUid": "string",
+        "locationId": "string",
+        "timestamp": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin() || isOperations()",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "bookings/{bookingId}",
+      "description": "Auto and cab ride requests",
+      "fields": {
+        "bookingId": "string",
+        "userId": "string",
+        "driverId": "string?",
+        "pickup": "string",
+        "drop": "string",
+        "estimatedTariff": "number",
+        "status": "string",
+        "createdAt": "timestamp",
+        "updatedAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || request.auth.uid == resource.data.driverId || isAdmin() || isOperations()",
+        "create": "request.auth.uid == incoming().userId",
+        "update": "request.auth.uid == resource.data.userId || request.auth.uid == resource.data.driverId || isAdmin()"
+      }
+    },
+    {
+      "path": "rides/{rideId}",
+      "description": "Active in-transit ride lifecycle",
+      "fields": {
+        "rideId": "string",
+        "bookingId": "string",
+        "status": "string",
+        "startedAt": "timestamp?",
+        "completedAt": "timestamp?"
+      },
+      "rules": {
+        "read": "isSignedIn()",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "payments/{paymentId}",
+      "description": "Payment records and status",
+      "fields": {
+        "paymentId": "string",
+        "userId": "string",
+        "amount": "number",
+        "currency": "string",
+        "status": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin()",
+        "write": "isAdmin()"
+      }
+    },
+    {
+      "path": "familyGroups/{groupId}",
+      "description": "Family safety groups for Kumbh pilgrims",
+      "fields": {
+        "groupId": "string",
+        "creatorId": "string",
+        "groupName": "string",
+        "meetingPoint": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "isSignedIn()",
+        "create": "request.auth.uid == incoming().creatorId",
+        "update": "request.auth.uid == existing().creatorId || isAdmin()"
+      }
+    },
+    {
+      "path": "familyMembers/{memberId}",
+      "description": "Members linked to family groups",
+      "fields": {
+        "memberId": "string",
+        "groupId": "string",
+        "userId": "string",
+        "displayName": "string",
+        "status": "string"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin()",
+        "create": "request.auth.uid == incoming().userId",
+        "update": "request.auth.uid == resource.data.userId || isAdmin()"
+      }
+    },
+    {
+      "path": "emergencyContacts/{contactId}",
+      "description": "Emergency contacts configured by users",
+      "fields": {
+        "contactId": "string",
+        "userId": "string",
+        "name": "string",
+        "relationship": "string",
+        "phone": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin() || isOperations()",
+        "write": "request.auth.uid == incoming().userId"
+      }
+    },
+    {
+      "path": "emergencyCases/{caseId}",
+      "description": "SOS emergency alerts dispatched to control center",
+      "fields": {
+        "caseId": "string",
+        "userId": "string",
+        "category": "string",
+        "coordinates": "map",
+        "status": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin() || isOperations()",
+        "create": "request.auth.uid == incoming().userId",
+        "update": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "lostPersonCases/{caseId}",
+      "description": "Lost and missing person reports",
+      "fields": {
+        "caseId": "string",
+        "reportedByUserId": "string",
+        "personName": "string",
+        "approxAge": "number",
+        "lastSeenLocation": "string",
+        "description": "string",
+        "status": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "create": "request.auth.uid == incoming().reportedByUserId",
+        "update": "request.auth.uid == existing().reportedByUserId || isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "lostItemCases/{caseId}",
+      "description": "Found or missing belongings reports",
+      "fields": {
+        "caseId": "string",
+        "reportedByUserId": "string",
+        "itemType": "string",
+        "description": "string",
+        "lastSeenLocation": "string",
+        "status": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "create": "request.auth.uid == incoming().reportedByUserId",
+        "update": "request.auth.uid == existing().reportedByUserId || isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "reviews/{reviewId}",
+      "description": "Pilgrim feedback and facility reviews",
+      "fields": {
+        "reviewId": "string",
+        "userId": "string",
+        "targetId": "string",
+        "rating": "number",
+        "comment": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "create": "request.auth.uid == incoming().userId",
+        "update": "request.auth.uid == existing().userId || isAdmin()"
+      }
+    },
+    {
+      "path": "complaints/{complaintId}",
+      "description": "Overcharging, misconduct, or fake pass grievance filings",
+      "fields": {
+        "complaintId": "string",
+        "userId": "string",
+        "category": "string",
+        "targetEntityId": "string?",
+        "description": "string",
+        "status": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "request.auth.uid == resource.data.userId || isAdmin() || isOperations()",
+        "create": "request.auth.uid == incoming().userId",
+        "update": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "announcements/{announcementId}",
+      "description": "Official notices and crowd management alerts",
+      "fields": {
+        "announcementId": "string",
+        "title": "map",
+        "body": "map",
+        "category": "string",
+        "priority": "string",
+        "sourceType": "string",
+        "sourceName": "string",
+        "sourceUrl": "string?",
+        "status": "string",
+        "verifiedAt": "string?",
+        "verifiedBy": "string?",
+        "validFrom": "string?",
+        "validUntil": "string?",
+        "createdBy": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "fraudAlerts/{alertId}",
+      "description": "Advisories regarding known scams and counterfeits",
+      "fields": {
+        "alertId": "string",
+        "alertType": "string",
+        "severity": "string",
+        "riskScore": "number",
+        "targetEntityType": "string",
+        "targetEntityId": "string",
+        "sourceType": "string",
+        "reviewStatus": "string",
+        "createdAt": "timestamp"
+      },
+      "rules": {
+        "read": "true",
+        "write": "isAdmin() || isOperations()"
+      }
+    },
+    {
+      "path": "auditLogs/{logId}",
+      "description": "Immutable security and administrative action logs",
+      "fields": {
+        "logId": "string",
+        "actorId": "string",
+        "actorRole": "string",
+        "action": "string",
+        "targetResource": "string",
+        "details": "string",
+        "timestamp": "timestamp"
+      },
+      "rules": {
+        "read": "isAdmin() || isOperations()",
+        "create": "isAdmin() || isOperations()",
+        "update": "false",
+        "delete": "false"
+      }
+    }
+  ]
+}

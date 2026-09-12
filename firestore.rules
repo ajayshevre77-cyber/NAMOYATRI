@@ -1,0 +1,270 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'namoyatriindia@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOperations() {
+      return isSignedIn() && (
+        isAdmin() ||
+        exists(/databases/$(database)/documents/operationsOfficers/$(request.auth.uid))
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation Helpers
+    function isValidUser(data) {
+      return data.userId is string &&
+        data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100 &&
+        data.preferredLanguage in ['en', 'hi', 'mr'] &&
+        data.role in ['TOURIST', 'DRIVER', 'VOLUNTEER', 'BUSINESS_PARTNER', 'ADMIN', 'OPERATIONS'] &&
+        data.verificationStatus in ['PENDING', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'SUSPENDED'];
+    }
+
+    function isValidProfile(data) {
+      return data.userId is string &&
+        data.isProfilePublic is bool &&
+        data.locationSharingMode in ['location_disabled', 'while_using_app', 'temporary_sharing', 'family_sharing'] &&
+        data.shareContactInEmergency is bool;
+    }
+
+    function isValidEmergencyContact(data) {
+      return data.userId is string &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 80 &&
+        data.relationship is string && data.relationship.size() <= 40 &&
+        data.phone is string && data.phone.size() <= 20;
+    }
+
+    function isValidLostPerson(data) {
+      return data.reportedByUserId is string &&
+        data.personName is string && data.personName.size() > 0 && data.personName.size() <= 100 &&
+        data.lastSeenLocation is string && data.lastSeenLocation.size() <= 200 &&
+        data.status in ['OPEN', 'LOCATED', 'CLOSED'];
+    }
+
+    function isValidAnnouncement(data) {
+      return data.sourceType in ['DEMO', 'COMMUNITY', 'VERIFIED', 'AUTHORIZED_OFFICIAL'] &&
+        data.priority in ['info', 'advisory', 'high_alert'] &&
+        data.status in ['DRAFT', 'PUBLISHED', 'FLAGGED', 'ARCHIVED'];
+    }
+
+    // Collection: Users (Core PII strictly owner or admin readable)
+    match /users/{userId} {
+      allow get: if isUser(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isUser(userId) && isValidId(userId) && isValidUser(incoming()) &&
+        incoming().role == 'TOURIST' &&
+        incoming().verificationStatus in ['PENDING', 'UNDER_REVIEW'];
+      allow update: if (isUser(userId) && isValidUser(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().role == existing().role &&
+        incoming().verificationStatus == existing().verificationStatus) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Profiles (Privacy settings & preferences)
+    match /profiles/{userId} {
+      allow get: if isUser(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isUser(userId) && isValidId(userId) && isValidProfile(incoming());
+      allow update: if (isUser(userId) && isValidProfile(incoming()) &&
+        incoming().userId == existing().userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Places (Public guide)
+    match /places/{placeId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: Facilities
+    match /facilities/{facilityId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: Drivers
+    match /drivers/{driverId} {
+      allow get: if isUser(driverId) || isAdmin() || isOperations();
+      allow list: if isAdmin() || isOperations();
+      allow create: if isUser(driverId) && incoming().verificationStatus == 'PENDING';
+      allow update: if (isUser(driverId) &&
+        !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Vehicles
+    match /vehicles/{vehicleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: Volunteers
+    match /volunteers/{volunteerId} {
+      allow read: if isSignedIn();
+      allow create: if isUser(volunteerId) && incoming().verificationStatus == 'PENDING';
+      allow update: if (isUser(volunteerId) &&
+        !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus', 'assignedZone'])) || isAdmin() || isOperations();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Businesses
+    match /businesses/{businessId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid && incoming().verificationStatus == 'PENDING';
+      allow update: if (isSignedIn() && existing().ownerId == request.auth.uid &&
+        !incoming().diff(existing()).affectedKeys().hasAny(['verificationStatus'])) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Passes (Read only by owner or staff)
+    match /passes/{passId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: PassUsages
+    match /passUsages/{usageId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow create: if isAdmin() || isOperations();
+      allow update, delete: if false;
+    }
+
+    // Collection: Bookings
+    match /bookings/{bookingId} {
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin() || isOperations());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin() || isOperations());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Rides
+    match /rides/{rideId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: Payments
+    match /payments/{paymentId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // Collection: FamilyGroups
+    match /familyGroups/{groupId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().creatorId == request.auth.uid;
+      allow update: if isSignedIn() && (existing().creatorId == request.auth.uid || isAdmin());
+      allow delete: if isSignedIn() && (existing().creatorId == request.auth.uid || isAdmin());
+    }
+
+    // Collection: FamilyMembers
+    match /familyMembers/{memberId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // Collection: EmergencyContacts
+    match /emergencyContacts/{contactId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid && isValidEmergencyContact(incoming());
+      allow update: if isSignedIn() && existing().userId == request.auth.uid && incoming().userId == request.auth.uid && isValidEmergencyContact(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+
+    // Collection: EmergencyCases
+    match /emergencyCases/{caseId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() || isOperations();
+      allow delete: if false;
+    }
+
+    // Collection: LostPersonCases
+    match /lostPersonCases/{caseId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().reportedByUserId == request.auth.uid && isValidLostPerson(incoming());
+      allow update: if isSignedIn() && (existing().reportedByUserId == request.auth.uid || isAdmin() || isOperations());
+      allow delete: if isAdmin();
+    }
+
+    // Collection: LostItemCases
+    match /lostItemCases/{caseId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().reportedByUserId == request.auth.uid;
+      allow update: if isSignedIn() && (existing().reportedByUserId == request.auth.uid || isAdmin() || isOperations());
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Reviews
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && existing().userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // Collection: Complaints
+    match /complaints/{complaintId} {
+      allow get, list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin() || isOperations());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() || isOperations();
+      allow delete: if false;
+    }
+
+    // Collection: Announcements (Official and community notices)
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow create: if isAdmin() || isOperations();
+      allow update: if isAdmin() || isOperations();
+      allow delete: if isAdmin();
+    }
+
+    // Collection: FraudAlerts
+    match /fraudAlerts/{alertId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOperations();
+    }
+
+    // Collection: AuditLogs (Immutable append-only by admin/operations)
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin() || isOperations();
+      allow create: if isAdmin() || isOperations();
+      allow update, delete: if false;
+    }
+  }
+}
