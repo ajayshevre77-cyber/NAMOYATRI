@@ -1,9 +1,15 @@
 import React from 'react';
-import { ShieldCheck, CheckCircle2, Building2, HelpCircle } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, Building2, HelpCircle, Car, Store } from 'lucide-react';
 import { VerificationTier } from '../types';
 
 interface Props {
-  tier: VerificationTier | 'namo_verified' | 'partner_ngo' | 'official_authorized';
+  tier:
+    | VerificationTier
+    | 'namo_verified'
+    | 'partner_ngo'
+    | 'official_authorized'
+    | 'verified_driver'
+    | 'verified_merchant';
   size?: 'sm' | 'md';
   showLabel?: boolean;
 }
@@ -57,6 +63,34 @@ export const VerificationBadge: React.FC<Props> = ({
         >
           <CheckCircle2 className={isSmall ? 'w-3.5 h-3.5 text-amber-600' : 'w-4 h-4 text-amber-600'} />
           {showLabel && <span>Namo Verified</span>}
+        </span>
+      );
+
+    case 'verified_driver':
+      return (
+        <span
+          id="badge-driver-verified"
+          className={`inline-flex items-center gap-1 font-semibold rounded-full bg-indigo-50 text-indigo-800 border border-indigo-200 ${
+            isSmall ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-sm'
+          }`}
+          title="Licence and RTO badge verified by the regional transport authority"
+        >
+          <Car className={isSmall ? 'w-3.5 h-3.5 text-indigo-600' : 'w-4 h-4 text-indigo-600'} />
+          {showLabel && <span>RTO Verified Driver</span>}
+        </span>
+      );
+
+    case 'verified_merchant':
+      return (
+        <span
+          id="badge-merchant-verified"
+          className={`inline-flex items-center gap-1 font-semibold rounded-full bg-teal-50 text-teal-800 border border-teal-200 ${
+            isSmall ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-sm'
+          }`}
+          title="Licensed establishment certified under Kumbh fair-pricing standards"
+        >
+          <Store className={isSmall ? 'w-3.5 h-3.5 text-teal-600' : 'w-4 h-4 text-teal-600'} />
+          {showLabel && <span>Kumbh Certified</span>}
         </span>
       );
 

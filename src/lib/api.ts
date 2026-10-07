@@ -31,3 +31,38 @@ export async function secureFetch(url: string, options: RequestInit = {}): Promi
     headers: mergedHeaders,
   });
 }
+
+/**
+ * Reads a list endpoint and returns the array under `key`.
+ *
+ * Throws on a transport failure, a non-2xx status, or a body that is not the
+ * shape we expect — so callers have something real to report. A plain
+ * `fetch().then(r => r.json())` treats a 404 HTML page as success, which is how
+ * a wrong URL can look like an empty feed forever.
+ */
+export async function fetchCollection<T>(url: string, key: string): Promise<T[]> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (cause) {
+    throw new Error(`${url} is unreachable`, { cause });
+  }
+
+  if (!res.ok) {
+    throw new Error(`${url} responded ${res.status} ${res.statusText}`);
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (cause) {
+    throw new Error(`${url} did not return JSON`, { cause });
+  }
+
+  const items = (body as Record<string, unknown>)?.[key] ?? body;
+  if (!Array.isArray(items)) {
+    throw new Error(`${url} returned no "${key}" array`);
+  }
+
+  return items as T[];
+}

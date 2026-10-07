@@ -751,3 +751,27 @@ export const MOCK_AUDIT_LOGS: AuditLog[] = [
     details: 'Generated family group "Sharma Parivar" with opt-in location sharing token.',
   },
 ];
+
+// Boarding and alighting points served by regulated Kumbh transport.
+// Shared by the Travel screen and the ride booking card.
+export const PICKUP_POINTS = [
+  'Nashik Road Railway Station',
+  'Panchavati Central Circle',
+  'Ramkund Holy Ghat Step 1',
+  'Central Bus Stand (CBS Nashik)',
+  'Outer Parking Hub P4 (Adgaon)',
+  'Sadhu Gram Sector 2',
+  'Trimbakeshwar Temple Outer Gate',
+  'Kushavarta Kund Bus Terminal',
+];
+
+export const DROP_POINTS = [
+  'Ramkund Holy Bathing Ghat',
+  'Trimbakeshwar Jyotirlinga Mandir',
+  'Shri Kalaram Mandir Panchavati',
+  'Tapovan Sacred Groves & Sangam',
+  'Kushavarta Kund (Trimbak)',
+  'Muktidham Pilgrim Annachhatra',
+  'Outer Satellite Parking P4 (Adgaon)',
+  'Sadhu Gram Mahamandaleshwar Camp',
+];

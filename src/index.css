@@ -1,1 +1,88 @@
 @import "tailwindcss";
+
+/* ===========================================================================
+   Entrance animations
+
+   The screens use `animate-in fade-in zoom-in-95` on modals and result cards.
+   Those class names come from the `tailwindcss-animate` plugin, which was
+   never installed — and is a Tailwind v3 plugin, so it would not work with the
+   v4 CSS-first setup this project uses anyway. Every one of those animations
+   was silently doing nothing.
+
+   Rather than add a dependency for four utilities, they are defined here with
+   the same names and semantics as the plugin, so the existing markup works
+   unchanged.
+
+   Duration is read from `--tw-duration`, which Tailwind's own `duration-*`
+   utilities set, so `animate-in duration-150` behaves as you would expect.
+   Falls back to 200ms when no duration class is present.
+
+   Vocabulary available: animate-in · fade-in · zoom-in · zoom-in-95 ·
+   slide-in-from-top-2 · slide-in-from-bottom-2 · slide-in-from-bottom-4
+   Add more by setting the matching --tw-enter-* property.
+   =========================================================================== */
+
+@layer utilities {
+  .animate-in {
+    animation-name: nyEnter;
+    animation-duration: var(--tw-duration, 200ms);
+    animation-timing-function: var(--tw-ease, cubic-bezier(0.16, 1, 0.3, 1));
+    animation-fill-mode: both;
+
+    /* `initial` makes each var() below fall through to its own default, so a
+       card that only sets fade-in does not also get scaled or translated. */
+    --tw-enter-opacity: initial;
+    --tw-enter-scale: initial;
+    --tw-enter-translate-x: initial;
+    --tw-enter-translate-y: initial;
+  }
+
+  .fade-in,
+  .fade-in-0 {
+    --tw-enter-opacity: 0;
+  }
+
+  .zoom-in {
+    --tw-enter-scale: 0;
+  }
+
+  .zoom-in-95 {
+    --tw-enter-scale: 0.95;
+  }
+
+  .slide-in-from-top-2 {
+    --tw-enter-translate-y: -0.5rem;
+  }
+
+  .slide-in-from-bottom-2 {
+    --tw-enter-translate-y: 0.5rem;
+  }
+
+  .slide-in-from-bottom-4 {
+    --tw-enter-translate-y: 1rem;
+  }
+}
+
+@keyframes nyEnter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(
+        var(--tw-enter-translate-x, 0),
+        var(--tw-enter-translate-y, 0),
+        0
+      )
+      scale3d(
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1),
+        var(--tw-enter-scale, 1)
+      );
+  }
+}
+
+/* Respect the viewer's motion preference. A pilgrim who has asked their phone
+   to reduce motion should still see the modal, just without the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in {
+    animation: none;
+  }
+}

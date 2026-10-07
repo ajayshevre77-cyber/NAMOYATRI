@@ -421,7 +421,7 @@ export const AuthModal: React.FC<Props> = ({
                 {otpCode.map((digit, idx) => (
                   <input
                     key={idx}
-                    ref={(el) => (otpInputRefs.current[idx] = el)}
+                    ref={(el) => { otpInputRefs.current[idx] = el; }}
                     id={`auth-otp-box-${idx}`}
                     type="text"
                     inputMode="numeric"

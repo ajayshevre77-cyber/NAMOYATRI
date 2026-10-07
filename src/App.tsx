@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sparkles, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { 
   UserRole, 
@@ -41,6 +41,9 @@ import { SafetySOSScreen } from './views/SafetySOSScreen';
 import { LostAndFoundScreen } from './views/LostAndFoundScreen';
 import { FraudAlertScreen } from './views/FraudAlertScreen';
 import { AccountSecurityView } from './views/AccountSecurityView';
+import { RideBookingScreen } from './views/RideBookingScreen';
+import { DataFeedNotice } from './components/DataFeedNotice';
+import { fetchCollection } from './lib/api';
 
 // Role Dashboards
 import { DriverDashboard } from './views/DriverDashboard';
@@ -55,6 +58,7 @@ function AppContent() {
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [activeTab, setActiveTab] = useState<TouristTab>('home');
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [savedPlaceIds, setSavedPlaceIds] = useState<string[]>([]);
   const [isNamoAIOpen, setIsNamoAIOpen] = useState(false);
 
   // Sync role if updated in profile
@@ -76,48 +80,57 @@ function AppContent() {
   const [announcements, setAnnouncements] = useState<OfficialAnnouncement[]>(MOCK_ANNOUNCEMENTS);
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>(MOCK_FRAUD_ALERTS);
 
-  // Fetch live endpoints on boot
-  useEffect(() => {
-    fetch('/api/places')
-      .then(res => res.json())
-      .then(data => { 
-        const items = data.places || data;
-        if (Array.isArray(items)) setPlaces(items); 
-      })
-      .catch(() => {});
+  // Which live feeds failed to load, by display name. Drives DataFeedNotice.
+  const [failedFeeds, setFailedFeeds] = useState<string[]>([]);
+  const [feedsRetrying, setFeedsRetrying] = useState(false);
+  const [noticeDismissed, setNoticeDismissed] = useState(false);
 
-    fetch('/api/passes/products')
-      .then(res => res.json())
-      .then(data => { 
-        const items = data.products || data;
-        if (Array.isArray(items)) setPassProducts(items); 
-      })
-      .catch(() => {});
+  /**
+   * Replaces the bundled mock data with whatever the API can serve.
+   *
+   * Each feed is independent: one failure must not stop the others, so they
+   * settle separately and the failures are collected rather than discarded.
+   */
+  const loadFeeds = useCallback(async () => {
+    const feeds = [
+      { label: 'Places', run: () => fetchCollection<Place>('/api/places', 'places').then(setPlaces) },
+      { label: 'Pass products', run: () => fetchCollection<MobilityPassProduct>('/api/passes/products', 'products').then(setPassProducts) },
+      { label: 'Your passes', run: () => fetchCollection<UserPass>('/api/passes/user-passes', 'passes').then(setUserPasses) },
+      { label: 'Announcements', run: () => fetchCollection<OfficialAnnouncement>('/api/announcements', 'announcements').then(setAnnouncements) },
+      { label: 'Volunteers', run: () => fetchCollection<Volunteer>('/api/volunteers', 'volunteers').then(setVolunteers) },
+    ];
 
-    fetch('/api/passes/user')
-      .then(res => res.json())
-      .then(data => { 
-        const items = data.passes || data;
-        if (Array.isArray(items)) setUserPasses(items); 
-      })
-      .catch(() => {});
+    const results = await Promise.allSettled(feeds.map(feed => feed.run()));
 
-    fetch('/api/announcements')
-      .then(res => res.json())
-      .then(data => { 
-        const items = data.announcements || data;
-        if (Array.isArray(items)) setAnnouncements(items); 
+    const failed = feeds
+      .filter((feed, i) => {
+        const result = results[i];
+        if (result.status !== 'rejected') return false;
+        console.error(
+          `[Namo Yatri] "${feed.label}" could not be loaded; showing bundled sample data instead.`,
+          result.reason,
+        );
+        return true;
       })
-      .catch(() => {});
+      .map(feed => feed.label);
 
-    fetch('/api/volunteers')
-      .then(res => res.json())
-      .then(data => { 
-        const items = data.volunteers || data;
-        if (Array.isArray(items)) setVolunteers(items); 
-      })
-      .catch(() => {});
+    setFailedFeeds(failed);
+    return failed;
   }, []);
+
+  useEffect(() => {
+    loadFeeds();
+  }, [loadFeeds]);
+
+  const handleRetryFeeds = async () => {
+    setFeedsRetrying(true);
+    try {
+      const stillFailing = await loadFeeds();
+      if (stillFailing.length === 0) setNoticeDismissed(false);
+    } finally {
+      setFeedsRetrying(false);
+    }
+  };
 
   const selectedPlace = places.find(p => p.id === selectedPlaceId) || null;
 
@@ -140,6 +153,18 @@ function AppContent() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-5xl mx-auto px-3.5 sm:px-6 pt-4 pb-20 sm:pb-12">
+        {/* Honest notice when the API could not be reached and mock data is showing */}
+        {failedFeeds.length > 0 && !noticeDismissed && (
+          <div className="mb-4">
+            <DataFeedNotice
+              failed={failedFeeds}
+              retrying={feedsRetrying}
+              onRetry={handleRetryFeeds}
+              onDismiss={() => setNoticeDismissed(true)}
+            />
+          </div>
+        )}
+
         {/* Tourist Pilgrim App Views */}
         {currentRole === 'tourist' && (
           <>
@@ -281,14 +306,17 @@ function AppContent() {
       {/* Place Detail Modal */}
       <PlaceDetailModal
         place={selectedPlace}
-        isOpen={!!selectedPlace}
         onClose={() => setSelectedPlaceId(null)}
         currentLanguage={currentLanguage}
-        onOpenTravel={(placeName) => {
-          setSelectedPlaceId(null);
-          setActiveTab('travel');
+        isSaved={!!selectedPlace && savedPlaceIds.includes(selectedPlace.id)}
+        onSavePlace={(placeId) => {
+          setSavedPlaceIds(prev =>
+            prev.includes(placeId)
+              ? prev.filter(id => id !== placeId)
+              : [...prev, placeId]
+          );
         }}
-        onOpenVolunteer={(zone) => {
+        onRequestVolunteer={() => {
           setSelectedPlaceId(null);
           setActiveTab('volunteers');
         }}
@@ -312,10 +340,36 @@ function AppContent() {
   );
 }
 
+/**
+ * Standalone mobile ride booking page, reached at `?screen=ride`.
+ * It brings its own bottom bar, so it renders instead of the app shell rather
+ * than inside it. Still needs the auth popup, which normally lives in AppContent.
+ */
+function StandaloneRideBooking() {
+  const { authModalOpen, authModalReason, closeAuthModal } = useAuth();
+
+  return (
+    <>
+      <RideBookingScreen />
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={closeAuthModal}
+        reason={authModalReason}
+        currentLanguage="en"
+      />
+    </>
+  );
+}
+
 export default function App() {
+  const standaloneScreen =
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search).get('screen');
+
   return (
     <AuthProvider>
-      <AppContent />
+      {standaloneScreen === 'ride' ? <StandaloneRideBooking /> : <AppContent />}
     </AuthProvider>
   );
 }

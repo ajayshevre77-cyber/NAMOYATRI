@@ -16,34 +16,13 @@ import { SupportedLanguage, translations } from '../i18n';
 import { TransportOption, TransportType, RideBooking } from '../types';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
 import { secureFetch } from '../lib/api';
+import { PICKUP_POINTS, DROP_POINTS } from '../data/kumbhData';
 
 interface Props {
   transportOptions: TransportOption[];
   currentLanguage: SupportedLanguage;
   onOpenPassTab: () => void;
 }
-
-const PICKUP_POINTS = [
-  'Nashik Road Railway Station',
-  'Panchavati Central Circle',
-  'Ramkund Holy Ghat Step 1',
-  'Central Bus Stand (CBS Nashik)',
-  'Outer Parking Hub P4 (Adgaon)',
-  'Sadhu Gram Sector 2',
-  'Trimbakeshwar Temple Outer Gate',
-  'Kushavarta Kund Bus Terminal',
-];
-
-const DROP_POINTS = [
-  'Ramkund Holy Bathing Ghat',
-  'Trimbakeshwar Jyotirlinga Mandir',
-  'Shri Kalaram Mandir Panchavati',
-  'Tapovan Sacred Groves & Sangam',
-  'Kushavarta Kund (Trimbak)',
-  'Muktidham Pilgrim Annachhatra',
-  'Outer Satellite Parking P4 (Adgaon)',
-  'Sadhu Gram Mahamandaleshwar Camp',
-];
 
 export const TravelScreen: React.FC<Props> = ({
   transportOptions,
