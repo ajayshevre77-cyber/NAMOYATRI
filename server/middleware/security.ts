@@ -40,20 +40,46 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
  * Controlled CORS Middleware
  * Disallows wildcard '*' on authenticated endpoints
  */
+/** Hosts allowed in full, matched exactly against the parsed hostname. */
+const ALLOWED_ORIGIN_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Parent domains whose subdomains are allowed. */
+const ALLOWED_ORIGIN_SUFFIXES = ['.run.app', '.google.com', '.firebaseapp.com'];
+
+/** Origins allowed as an exact string, scheme included. */
+const ALLOWED_ORIGINS = new Set(['https://ai.studio']);
+
+/**
+ * Decides whether an Origin header may be echoed back.
+ *
+ * The hostname is parsed rather than substring-matched. A substring test lets
+ * an attacker register a domain that merely contains an allowed name -
+ * `localhost.attacker.com` or `evil.com/?x=127.0.0.1` - and be granted
+ * credentialed cross-origin access.
+ */
+export function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    return false; // Not a parseable origin, so not one we trust.
+  }
+
+  if (ALLOWED_ORIGIN_HOSTS.has(hostname)) return true;
+
+  // endsWith on the hostname, so `attacker-run.app` and
+  // `run.app.attacker.com` both fail while `svc.run.app` passes.
+  return ALLOWED_ORIGIN_SUFFIXES.some(suffix => hostname.endsWith(suffix));
+}
+
 export function secureCors(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
 
   // Verify origin if present
   if (origin) {
-    const isAllowed = 
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      origin.endsWith('.run.app') ||
-      origin.endsWith('.google.com') ||
-      origin.endsWith('.firebaseapp.com') ||
-      origin === 'https://ai.studio';
-
-    if (isAllowed) {
+    if (isAllowedOrigin(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }

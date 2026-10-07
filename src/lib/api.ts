@@ -33,6 +33,41 @@ export async function secureFetch(url: string, options: RequestInit = {}): Promi
 }
 
 /**
+ * The server's own view of who you are.
+ *
+ * This is the only trustworthy source of a user's role. The Firestore profile
+ * is convenient for display, but the server decides what a role actually is,
+ * and it is the server that enforces it on every request.
+ */
+export interface ServerIdentity {
+  uid: string;
+  email?: string;
+  emailVerified: boolean;
+  phoneNumber?: string;
+  role: string;
+  verificationStatus: string;
+  isAnonymous: boolean;
+}
+
+/**
+ * Asks the API who the signed-in user is.
+ *
+ * Returns null when the call fails or nobody is signed in, so callers fall back
+ * to the least-privileged assumption rather than to a cached guess.
+ */
+export async function fetchServerIdentity(): Promise<ServerIdentity | null> {
+  try {
+    const res = await secureFetch('/api/users/me');
+    if (!res.ok) return null;
+    const data = await res.json();
+    return (data?.user as ServerIdentity) ?? null;
+  } catch (err) {
+    console.error('[Namo Yatri] Could not confirm identity with the server.', err);
+    return null;
+  }
+}
+
+/**
  * Reads a list endpoint and returns the array under `key`.
  *
  * Throws on a transport failure, a non-2xx status, or a body that is not the

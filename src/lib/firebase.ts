@@ -62,7 +62,10 @@ export const db: Firestore = (function initDb() {
   }
 })();
 
-export const ADMIN_EMAIL = 'namoyatriindia@gmail.com';
+// The bootstrap admin address deliberately does not live here. Admin is granted
+// by the server (server/firebaseAdmin.ts), which also requires a verified email.
+// Keeping it client-side both shipped a real address in the bundle and let the
+// browser render admin screens on its own say-so.
 
 /**
  * Format raw Firebase Auth errors into clear, friendly guidance
@@ -119,11 +122,11 @@ export async function getOrCreateUserProfile(fbUser: FirebaseUser): Promise<User
         phone: data.phoneNumber || fbUser.phoneNumber || '',
         phoneNumber: data.phoneNumber || fbUser.phoneNumber || '',
         email: data.email || fbUser.email || undefined,
-        role: (fbUser.email === ADMIN_EMAIL ? 'ADMIN' : data.role || 'TOURIST') as UserRole,
+        role: (data.role || 'TOURIST') as UserRole,
         createdAt: data.createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
         preferredLanguage: data.preferredLanguage || 'en',
         isPhoneVerified: Boolean(fbUser.phoneNumber),
-        verificationStatus: (fbUser.email === ADMIN_EMAIL ? 'VERIFIED' : data.verificationStatus || 'PENDING') as VerificationStatus,
+        verificationStatus: (data.verificationStatus || 'PENDING') as VerificationStatus,
         privacySettings: {
           isProfilePublic: false,
           locationSharingMode: 'temporary_sharing',
@@ -134,9 +137,11 @@ export async function getOrCreateUserProfile(fbUser: FirebaseUser): Promise<User
       };
     }
 
-    // Default new user is strictly TOURIST
-    const initialRole: StandardUserRole = fbUser.email === ADMIN_EMAIL ? 'ADMIN' : 'TOURIST';
-    const initialStatus: VerificationStatus = fbUser.email === ADMIN_EMAIL ? 'VERIFIED' : 'PENDING';
+    // Every new user is strictly TOURIST / PENDING. Elevation is the server's
+    // decision alone (see resolveServerRoleAndStatus in server/firebaseAdmin.ts);
+    // the client must never grant a role to itself, not even the bootstrap admin.
+    const initialRole: StandardUserRole = 'TOURIST';
+    const initialStatus: VerificationStatus = 'PENDING';
 
     const newUserData = {
       userId: fbUser.uid,
@@ -194,7 +199,7 @@ export async function getOrCreateUserProfile(fbUser: FirebaseUser): Promise<User
       phone: fbUser.phoneNumber || '',
       phoneNumber: fbUser.phoneNumber || '',
       email: fbUser.email || undefined,
-      role: (fbUser.email === ADMIN_EMAIL ? 'ADMIN' : 'TOURIST') as UserRole,
+      role: 'TOURIST' as UserRole,
       createdAt: new Date().toISOString(),
       preferredLanguage: 'en',
       isPhoneVerified: Boolean(fbUser.phoneNumber),

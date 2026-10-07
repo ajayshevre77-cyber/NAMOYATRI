@@ -12,12 +12,12 @@ import {
   RecaptchaVerifier,
   signInWithPhoneNumber,
   formatAuthError,
-  ADMIN_EMAIL,
   ConfirmationResult,
   FirebaseUser
 } from '../lib/firebase';
 import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, UserRole, VerificationStatus, PrivacySettings } from '../types';
+import { fetchServerIdentity } from '../lib/api';
 
 interface AuthContextType {
   firebaseUser: FirebaseUser | null;
@@ -61,7 +61,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsGuest(user.isAnonymous);
         try {
           const profile = await getOrCreateUserProfile(user);
-          setUserProfile(profile);
+
+          // The Firestore document supplies the display fields, but the role
+          // and verification state are whatever the server says they are.
+          // Anything else would let the browser decide its own privileges.
+          const identity = await fetchServerIdentity();
+          setUserProfile(
+            identity
+              ? {
+                  ...profile,
+                  role: identity.role.toLowerCase() as UserRole,
+                  verificationStatus: identity.verificationStatus as VerificationStatus,
+                }
+              : profile,
+          );
         } catch (e) {
           console.error('Profile fetch error:', e);
         }

@@ -6,6 +6,23 @@ All notable changes to the Namo Yatri frontend.
 
 ## 2026-10-07
 
+### Security — closed the two open items from the hardening brief
+
+**CORS origin check could be bypassed.** The allow-list used substring matching,
+so `localhost.attacker.com` and `evil.com/?x=127.0.0.1` were both accepted and
+granted credentialed cross-origin access. The check now parses the URL and
+matches the hostname exactly. Covered by 13 cases, including the six strings
+that defeated the old check.
+
+**The browser could grant itself ADMIN.** `src/lib/firebase.ts` assigned the
+ADMIN role on an email-string match with no email-verification check, so the
+interface would render admin screens on client data alone. The server was never
+fooled — it requires a verified email — but this is exactly what the brief asked
+to remove. The client now reads its role from `GET /api/users/me`, the server's
+own answer. The hardcoded admin address no longer ships in the browser bundle.
+
+All 10 security scenarios still pass.
+
 ### Changed — Ride booking screen navigation
 
 The bottom bar went from three items to five. **Account** was removed and
@@ -14,11 +31,15 @@ replaced by **Explore**, **Tour** and **Map**:
 > Home · Explore · **Pass** · Tour · Map
 
 Pass stays third of five, so it remains dead centre, raised and highlighted as
-the original sketch specified. Icons now match the ones the main app already
-uses for the same destinations, so both bars read as the same product.
+the original sketch specified.
 
-Checked at 320px wide — the narrowest phone still in common use — with no
-overflow and every target above the 48px minimum.
+Labels and icons now come from the same translation file the main app uses, so
+a destination is never called two different things in two places. "Tour" is
+therefore **Travel** — the term already translated as `यात्रा` and `प्रवास`;
+"Tour" would have needed new Hindi and Marathi strings invented.
+
+Checked at 448 / 390 / 320px in all three languages: no overflow, nothing
+truncated, every target above the 48px minimum.
 
 ---
 

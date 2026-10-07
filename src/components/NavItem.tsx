@@ -48,7 +48,10 @@ export const NavItem: React.FC<Props> = ({
           )}
         </span>
         <span
-          className={`text-[11px] font-semibold ${active ? 'text-orange-700' : 'text-stone-600'}`}
+          title={label}
+          className={`text-[11px] font-semibold max-w-full truncate ${
+            active ? 'text-orange-700' : 'text-stone-600'
+          }`}
         >
           {label}
         </span>
@@ -75,7 +78,12 @@ export const NavItem: React.FC<Props> = ({
           </span>
         )}
       </span>
-      <span className={`text-[11px] ${active ? 'text-orange-700 font-semibold' : 'text-stone-500'}`}>
+      <span
+        title={label}
+        className={`text-[11px] max-w-full truncate ${
+          active ? 'text-orange-700 font-semibold' : 'text-stone-500'
+        }`}
+      >
         {label}
       </span>
     </button>
