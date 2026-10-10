@@ -60,9 +60,9 @@ export const MapScreen: React.FC<Props> = ({
 
       {/* Honest Architectural Placeholder Notice */}
       <PlaceholderNotice
-        title="Interactive Schematic Layout"
-        description="This interactive schematic displays verified GPS coordinates for Simhastha 2027. Full raster/vector tile integration with Google Maps Platform or Mapbox GL is structured for seamless activation via server API credentials."
-        integrationName="GIS Tile Integration"
+        title="Schematic layout, not a map"
+        description="Pins are arranged in a grid and are not to scale. Place coordinates are approximate and have not been verified. Use “Open in Google Maps” to see a real location."
+        integrationName="Map Tiles"
       />
 
       {/* Filter Chips */}
@@ -199,7 +199,7 @@ export const MapScreen: React.FC<Props> = ({
               className="flex-1 sm:flex-none px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1"
             >
               <Navigation className="w-3.5 h-3.5 text-orange-600" />
-              <span>External GPS</span>
+              <span>Open in Google Maps</span>
             </button>
           </div>
         </div>

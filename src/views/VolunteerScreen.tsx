@@ -31,7 +31,7 @@ const EXPERTISE_LABELS: Record<VolunteerExpertise, string> = {
   language_assist: 'Language Translation',
   senior_citizen_assist: 'Senior Citizen Care',
   accessibility_assist: 'Wheelchair & Accessibility',
-  tourist_guide: 'Authorized Pilgrimage Guide',
+  tourist_guide: 'Pilgrimage Guide',
 };
 
 export const VolunteerScreen: React.FC<Props> = ({
@@ -56,6 +56,7 @@ export const VolunteerScreen: React.FC<Props> = ({
   const [volunteerLanguages, setVolunteerLanguages] = useState(['Marathi', 'Hindi']);
   const [selectedSkills, setSelectedSkills] = useState<VolunteerExpertise[]>(['senior_citizen_assist']);
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
 
   const filteredVolunteers = volunteers.filter(v => {
     const matchesExp = selectedExpertise === 'all' || v.expertise.includes(selectedExpertise as any);
@@ -92,10 +93,13 @@ export const VolunteerScreen: React.FC<Props> = ({
     }
   };
 
+  // Success is shown only when the server accepted the application. It used to
+  // be shown unconditionally, even for a guest whose request was rejected.
   const handleRegisterVolunteer = async (e: React.FormEvent) => {
     e.preventDefault();
+    setRegisterError(null);
     try {
-      await secureFetch('/api/partner/apply', {
+      const res = await secureFetch('/api/partner/apply', {
         method: 'POST',
         body: JSON.stringify({
           roleRequested: 'VOLUNTEER',
@@ -107,10 +111,20 @@ export const VolunteerScreen: React.FC<Props> = ({
           },
         }),
       });
+      if (res.ok) {
+        setRegisterSuccess(true);
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      setRegisterError(
+        res.status === 401
+          ? 'Please sign in to apply as a volunteer.'
+          : data?.error || 'Your application could not be submitted. Please try again.',
+      );
     } catch (err) {
-      console.error('Registration submission notice', err);
+      console.error('Registration submission failed', err);
+      setRegisterError('Could not reach the server. Check your connection and try again.');
     }
-    setRegisterSuccess(true);
   };
 
   return (
@@ -121,7 +135,7 @@ export const VolunteerScreen: React.FC<Props> = ({
           Pilgrim Seva & Volunteers
         </h2>
         <p className="text-xs sm:text-sm text-stone-500">
-          Dedicated, verified volunteers for language support, senior citizen care & temple navigation.
+          Volunteers for language support, senior citizen care & temple navigation. Listings are demo data.
         </p>
       </div>
 
@@ -156,9 +170,9 @@ export const VolunteerScreen: React.FC<Props> = ({
         <div className="space-y-4">
           {/* Transparency Disclaimer */}
           <PlaceholderNotice
-            title="Verified Seva Standards"
-            description="All listed volunteers undergo identity checks or represent empanelled Kumbh disaster relief partners (Bharat Seva Mandal, Red Cross). Government/official tags require verified DDMA accreditation."
-            integrationName="Volunteer Accreditation Cell"
+            title="Sample volunteer listings"
+            description="These volunteers are demo data, not real people. No identity checks or accreditation have been done, and no volunteer organisation is affiliated with this app. A request here notifies no one."
+            integrationName="Volunteer Accreditation"
           />
 
           {/* Filter Bar */}
@@ -291,7 +305,7 @@ export const VolunteerScreen: React.FC<Props> = ({
               Join Simhastha Kumbh Seva Corps
             </h3>
             <p className="text-xs text-stone-500 mt-0.5">
-              Serve millions of sacred pilgrims in Nashik and Trimbakeshwar. Background verification and police clearance mandatory before official badge issuance.
+              Serve pilgrims in Nashik and Trimbakeshwar. This is a demo: applications are stored on the demo server only and are not sent to any authority.
             </p>
           </div>
 
@@ -299,10 +313,10 @@ export const VolunteerScreen: React.FC<Props> = ({
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-950 text-xs space-y-2">
               <div className="flex items-center gap-2 font-bold text-sm text-emerald-900">
                 <Check className="w-5 h-5 text-emerald-600" />
-                <span>Application Submitted to Kumbh Seva Registry</span>
+                <span>Application recorded (demo)</span>
               </div>
               <p className="leading-relaxed">
-                Thank you for offering your seva. Your profile reference number is <strong>VOL-APP-2027-4482</strong>. The District Administration and partner NGO committee will contact you for mandatory briefing and ID credentialing.
+                Thank you for offering your seva. Your application is stored on the demo server for an app administrator to review. It is not sent to the District Administration or any volunteer organisation, and no one will contact you.
               </p>
             </div>
           ) : (
@@ -360,6 +374,12 @@ export const VolunteerScreen: React.FC<Props> = ({
                 By submitting, you pledge to adhere to the Kumbh Pilgrim Dignity Charter, attend certified disaster triage training, and consent to identity verification.
               </div>
 
+              {registerError && (
+                <p role="alert" className="rounded-xl bg-red-50 border border-red-200 px-3 py-2.5 text-red-700">
+                  {registerError}
+                </p>
+              )}
+
               <button
                 type="submit"
                 className="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl transition shadow-xs"
@@ -395,9 +415,9 @@ export const VolunteerScreen: React.FC<Props> = ({
             {requestSuccess ? (
               <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-950 text-xs text-center space-y-1">
                 <Check className="w-8 h-8 text-emerald-600 mx-auto" />
-                <p className="font-bold text-sm">Assistance Request Sent</p>
+                <p className="font-bold text-sm">Demo request recorded</p>
                 <p className="text-[11px] text-emerald-800">
-                  {targetVolunteer.name} has been notified at their duty post. They will contact you shortly.
+                  No volunteer has been notified. Volunteer listings in this demo are sample data.
                 </p>
               </div>
             ) : (
@@ -442,7 +462,7 @@ export const VolunteerScreen: React.FC<Props> = ({
                         <span>Sending...</span>
                       </>
                     ) : (
-                      <span>Dispatch Request</span>
+                      <span>Send request (demo)</span>
                     )}
                   </button>
                 </div>

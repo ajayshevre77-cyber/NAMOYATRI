@@ -74,11 +74,14 @@ export async function fetchServerIdentity(): Promise<ServerIdentity | null> {
  * shape we expect — so callers have something real to report. A plain
  * `fetch().then(r => r.json())` treats a 404 HTML page as success, which is how
  * a wrong URL can look like an empty feed forever.
+ *
+ * Pass `init` to send headers, e.g. `{ headers: await getAuthHeader() }` for a
+ * feed that depends on who is signed in.
  */
-export async function fetchCollection<T>(url: string, key: string): Promise<T[]> {
+export async function fetchCollection<T>(url: string, key: string, init?: RequestInit): Promise<T[]> {
   let res: Response;
   try {
-    res = await fetch(url);
+    res = await fetch(url, init);
   } catch (cause) {
     throw new Error(`${url} is unreachable`, { cause });
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Sparkles, AlertTriangle, ShieldCheck } from 'lucide-react';
 import { 
   UserRole, 
@@ -11,11 +11,10 @@ import {
   FraudAlert 
 } from './types';
 import { SupportedLanguage } from './i18n';
-import { 
-  MOCK_PLACES, 
-  MOCK_PASS_PRODUCTS, 
-  MOCK_USER_PASSES, 
-  MOCK_TRANSPORT_OPTIONS, 
+import {
+  MOCK_PLACES,
+  MOCK_PASS_PRODUCTS,
+  MOCK_TRANSPORT_OPTIONS,
   MOCK_VOLUNTEERS, 
   MOCK_ANNOUNCEMENTS, 
   MOCK_FRAUD_ALERTS 
@@ -43,7 +42,7 @@ import { FraudAlertScreen } from './views/FraudAlertScreen';
 import { AccountSecurityView } from './views/AccountSecurityView';
 import { RideBookingScreen } from './views/RideBookingScreen';
 import { DataFeedNotice } from './components/DataFeedNotice';
-import { fetchCollection } from './lib/api';
+import { fetchCollection, getAuthHeader } from './lib/api';
 
 // Role Dashboards
 import { DriverDashboard } from './views/DriverDashboard';
@@ -53,7 +52,7 @@ import { AdminOperationsDashboard } from './views/AdminOperationsDashboard';
 import { SIMHASTHA_DESTINATION } from './data/kumbhData';
 
 function AppContent() {
-  const { authModalOpen, authModalReason, closeAuthModal, userProfile } = useAuth();
+  const { authModalOpen, authModalReason, closeAuthModal, userProfile, firebaseUser } = useAuth();
   const [currentRole, setCurrentRole] = useState<UserRole>('tourist');
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
   const [activeTab, setActiveTab] = useState<TouristTab>('home');
@@ -74,7 +73,10 @@ function AppContent() {
   // Data states initialized with mock defaults and refreshed via API
   const [places, setPlaces] = useState<Place[]>(MOCK_PLACES);
   const [passProducts, setPassProducts] = useState<MobilityPassProduct[]>(MOCK_PASS_PRODUCTS);
-  const [userPasses, setUserPasses] = useState<UserPass[]>(MOCK_USER_PASSES);
+  // Starts empty, never with sample data: a pass shown here is presented to the
+  // visitor as their own, so it must come from the server for the signed-in user.
+  const [userPasses, setUserPasses] = useState<UserPass[]>([]);
+  const passesRequestId = useRef(0);
   const [transportOptions, setTransportOptions] = useState<TransportOption[]>(MOCK_TRANSPORT_OPTIONS);
   const [volunteers, setVolunteers] = useState<Volunteer[]>(MOCK_VOLUNTEERS);
   const [announcements, setAnnouncements] = useState<OfficialAnnouncement[]>(MOCK_ANNOUNCEMENTS);
@@ -95,7 +97,18 @@ function AppContent() {
     const feeds = [
       { label: 'Places', run: () => fetchCollection<Place>('/api/places', 'places').then(setPlaces) },
       { label: 'Pass products', run: () => fetchCollection<MobilityPassProduct>('/api/passes/products', 'products').then(setPassProducts) },
-      { label: 'Your passes', run: () => fetchCollection<UserPass>('/api/passes/user-passes', 'passes').then(setUserPasses) },
+      {
+        label: 'Your passes',
+        run: async () => {
+          // Only the latest request may write: after a sign-out, a slow reply
+          // for the previous user must not land in the next user's view.
+          const request = ++passesRequestId.current;
+          const passes = await fetchCollection<UserPass>('/api/passes/user-passes', 'passes', {
+            headers: await getAuthHeader(),
+          });
+          if (request === passesRequestId.current) setUserPasses(passes);
+        },
+      },
       { label: 'Announcements', run: () => fetchCollection<OfficialAnnouncement>('/api/announcements', 'announcements').then(setAnnouncements) },
       { label: 'Volunteers', run: () => fetchCollection<Volunteer>('/api/volunteers', 'volunteers').then(setVolunteers) },
     ];
@@ -118,9 +131,11 @@ function AppContent() {
     return failed;
   }, []);
 
+  // Reload on sign-in and sign-out too, so "Your passes" always belongs to
+  // whoever is signed in now and is cleared for a guest.
   useEffect(() => {
     loadFeeds();
-  }, [loadFeeds]);
+  }, [loadFeeds, firebaseUser?.uid]);
 
   const handleRetryFeeds = async () => {
     setFeedsRetrying(true);
@@ -300,6 +315,7 @@ function AppContent() {
           onTabChange={setActiveTab}
           onSelectTab={setActiveTab}
           currentLanguage={currentLanguage}
+          activePassCount={userPasses.filter(p => p.status === 'active').length}
         />
       )}
 

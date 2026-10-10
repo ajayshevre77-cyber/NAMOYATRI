@@ -54,7 +54,7 @@ export const ExploreScreen: React.FC<Props> = ({
             Sacred Places & Facilities
           </h2>
           <p className="text-xs sm:text-sm text-stone-500">
-            Explore verified holy sites, ghats, food annachhatras & emergency facilities.
+            Explore holy sites, ghats, food annachhatras & facilities. Listings are demo data and not yet verified.
           </p>
         </div>
 
@@ -96,8 +96,8 @@ export const ExploreScreen: React.FC<Props> = ({
       {/* Place Count */}
       <div className="flex items-center justify-between text-xs text-stone-500">
         <span>Showing {filteredPlaces.length} locations</span>
-        <span className="text-[11px] text-emerald-700 font-medium">
-          ✓ All official Kumbh sites verified
+        <span className="text-[11px] text-stone-500 font-medium">
+          Demo listings, not officially verified
         </span>
       </div>
 

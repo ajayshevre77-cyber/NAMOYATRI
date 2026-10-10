@@ -174,6 +174,17 @@ export function centralizedErrorHandler(
   res: Response, 
   next: NextFunction
 ): void {
+  // A malformed JSON body is the client's mistake, not a server fault: say so
+  // with a stable code instead of the generic INTERNAL_SERVER_ERROR.
+  if (err?.type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Request body is not valid JSON.', code: 'INVALID_JSON_BODY' });
+    return;
+  }
+  if (err?.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Request body is too large.', code: 'PAYLOAD_TOO_LARGE' });
+    return;
+  }
+
   // Always log full diagnostics on server side only
   console.error(`[Server Error] [${req.method} ${req.path}]`, err);
 

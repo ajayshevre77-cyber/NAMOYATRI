@@ -103,7 +103,7 @@ export const HomeScreen: React.FC<Props> = ({
           <div className="pt-2">
             <div className="flex items-center gap-2 text-xs text-orange-200 font-semibold mb-1.5">
               <Calendar className="w-3.5 h-3.5 text-orange-400" />
-              <span>Key Shahi Snan Dates (Ramkund & Kushavarta):</span>
+              <span>Key Shahi Snan Dates (Ramkund & Kushavarta), tentative, confirm with official sources:</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {SIMHASTHA_DESTINATION.nextShahiSnanDates.map((snan, idx) => (
@@ -335,10 +335,10 @@ export const HomeScreen: React.FC<Props> = ({
       {/* Production Architecture & Transparency Footer */}
       <section className="p-3.5 rounded-2xl bg-stone-100/90 border border-stone-200 text-stone-600 text-xs space-y-1">
         <p className="font-bold text-stone-800">
-          Namo Yatri Simhastha Kumbh 2027 Production Architecture
+          Namo Yatri is a demo prototype
         </p>
         <p className="leading-relaxed">
-          Official information, emergency tickets, transport schedules, and crowd alerts connect to the Nashik District Emergency Operations Center (DEOC) & Kumbh Control Cell. External bank gateways and live GIS tracking are structured via modular interfaces.
+          It is not connected to the District Emergency Operations Center (DEOC), the Kumbh Control Cell, any transport operator or any payment gateway. Places, fares and announcements marked demo are sample data. In an emergency, call 112 or 108.
         </p>
       </section>
     </div>

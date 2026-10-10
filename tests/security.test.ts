@@ -5,7 +5,7 @@ process.env.NODE_ENV = 'test';
 
 async function runSecurityTestSuite() {
   console.log('=================================================================');
-  console.log('NAMO YATRI SECURITY HARDENING TEST SUITE (10 SCENARIOS)');
+  console.log('NAMO YATRI SECURITY HARDENING TEST SUITE (14 SCENARIOS)');
   console.log('=================================================================\n');
 
   // Start ephemeral server
@@ -213,12 +213,98 @@ async function runSecurityTestSuite() {
       };
     });
 
+    // -------------------------------------------------------------
+    // Test 11: Guest listing "your passes" gets nobody else's pass
+    // -------------------------------------------------------------
+    await assertTest(11, 'Guest calling /api/passes/user-passes receives no passes (no seeded demo pass leak)', async () => {
+      const res = await fetch(`${baseUrl}/api/passes/user-passes`);
+      const body: any = await res.json();
+      return {
+        success: res.status === 200 && Array.isArray(body.passes) && body.passes.length === 0,
+        details: `Status: ${res.status}, Passes returned: ${body.passes?.length}`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 12: User A listing passes never sees User B's pass
+    // -------------------------------------------------------------
+    await assertTest(12, "User A's pass list excludes User B's pass", async () => {
+      const purchaseRes = await fetch(`${baseUrl}/api/passes/purchase`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer TEST_TOKEN_VALID:list_owner_b:TOURIST:VERIFIED',
+        },
+        body: JSON.stringify({ passType: '1_day', userName: 'Owner B' }),
+      });
+      const purchaseBody: any = await purchaseRes.json();
+      const passId = purchaseBody.pass?.id;
+
+      const listAs = async (uid: string) => {
+        const res = await fetch(`${baseUrl}/api/passes/user-passes`, {
+          headers: { Authorization: `Bearer TEST_TOKEN_VALID:${uid}:TOURIST:VERIFIED` },
+        });
+        const body: any = await res.json();
+        return { status: res.status, ids: (body.passes ?? []).map((p: any) => p.id) as string[] };
+      };
+      const owner = await listAs('list_owner_b');
+      const other = await listAs('list_other_a');
+
+      return {
+        success:
+          Boolean(passId) &&
+          owner.status === 200 && owner.ids.includes(passId) &&
+          other.status === 200 && other.ids.length === 0,
+        details: `Owner sees own pass: ${owner.ids.includes(passId)}, other user sees ${other.ids.length} passes`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 13: Pass verification without the token is rejected
+    // -------------------------------------------------------------
+    await assertTest(13, 'Pass verification with a reference number but no token is rejected (400)', async () => {
+      const res = await fetch(`${baseUrl}/api/passes/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passRefNumber: 'NY-KM27-8942-X' }),
+      });
+      const body: any = await res.json();
+      return {
+        success: res.status === 400 && body.code === 'PASS_TOKEN_REQUIRED' && body.userName === undefined,
+        details: `Status: ${res.status}, Code: ${body.code}`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 14: Wrong token reveals nothing about the pass holder
+    // -------------------------------------------------------------
+    await assertTest(14, 'Pass verification with a wrong token is rejected like an unknown pass (404)', async () => {
+      const verify = async (passRefNumber: string) => {
+        const res = await fetch(`${baseUrl}/api/passes/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passRefNumber, tokenHash: 'WRONG_TOKEN' }),
+        });
+        return { status: res.status, body: (await res.json()) as any };
+      };
+      const known = await verify('NY-KM27-8942-X');
+      const unknown = await verify('NY-KM27-0000-Z');
+
+      return {
+        success:
+          known.status === 404 && known.body.code === 'PASS_NOT_FOUND' &&
+          known.body.userName === undefined &&
+          unknown.status === known.status && unknown.body.reason === known.body.reason,
+        details: `Known ref: ${known.status} ${known.body.code}; unknown ref: ${unknown.status} ${unknown.body.code}`,
+      };
+    });
+
   } finally {
     server.close();
   }
 
   console.log('\n=================================================================');
-  console.log(`TEST RESULTS: ${passed} PASSED, ${failed} FAILED (TOTAL 10)`);
+  console.log(`TEST RESULTS: ${passed} PASSED, ${failed} FAILED (TOTAL ${passed + failed})`);
   console.log('=================================================================');
 
   if (failed > 0) {

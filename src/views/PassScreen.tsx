@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   QrCode, 
   ShieldCheck, 
@@ -40,6 +40,14 @@ export const PassScreen: React.FC<Props> = ({
   const [selectedProductId, setSelectedProductId] = useState<PassType>('1_day');
   const [purchasing, setPurchasing] = useState(false);
   const [activePass, setActivePass] = useState<UserPass>(userPasses[0] || null);
+
+  // Passes arrive after mount and change on sign-in or sign-out. Drop a pass
+  // that is no longer in the list, so a signed-out user's pass never lingers.
+  useEffect(() => {
+    setActivePass(prev =>
+      prev && userPasses.some(p => p.id === prev.id) ? prev : (userPasses[0] ?? null),
+    );
+  }, [userPasses]);
 
   // Conductor Inspection Verification state
   const [isVerifying, setIsVerifying] = useState(false);
@@ -145,9 +153,9 @@ export const PassScreen: React.FC<Props> = ({
           </div>
 
           <PlaceholderNotice
-            title="Unified Mobility Pass Integration"
-            description="Fares are statutory rates regulated for Simhastha Kumbh 2027 by Maharashtra Transport Department. External UPI and banking gateway APIs will process production transactions."
-            integrationName="Statutory Kumbh Mobility Tariff"
+            title="Demo passes: no payment, not valid for travel"
+            description="Pass products, prices and coverage are sample values, not official or regulated tariffs. No payment is taken, and a demo pass is not accepted on any real vehicle."
+            integrationName="Payments & transport operators"
           />
 
           {/* Pass Product Cards */}
@@ -171,11 +179,6 @@ export const PassScreen: React.FC<Props> = ({
                         <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-orange-100 text-orange-800">
                           {prod.durationDays === 1 ? '1 Day' : `${prod.durationDays} Days`} Validity
                         </span>
-                        {prod.isRegulatedTariff && (
-                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                            Regulated Tariff
-                          </span>
-                        )}
                       </div>
                       <h3 className="font-bold text-stone-900 text-base sm:text-lg mt-1">
                         {prod.title[currentLanguage] || prod.title.en}
@@ -185,7 +188,7 @@ export const PassScreen: React.FC<Props> = ({
                       <span className="text-2xl font-black font-serif text-stone-900">
                         ₹{prod.priceInr}
                       </span>
-                      <p className="text-[10px] text-stone-400">Total Fixed Rate</p>
+                      <p className="text-[10px] text-stone-400">Demo price</p>
                     </div>
                   </div>
 
@@ -223,10 +226,10 @@ export const PassScreen: React.FC<Props> = ({
             {purchasing ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Generating Cryptographic Pass Token...</span>
+                <span>Issuing demo pass…</span>
               </>
             ) : (
-              <span>Get Mobility Pass (Instant Activation)</span>
+              <span>Get demo pass (no payment)</span>
             )}
           </button>
         </div>
@@ -238,7 +241,7 @@ export const PassScreen: React.FC<Props> = ({
               Active Pilgrim Mobility Pass
             </h2>
             <p className="text-xs sm:text-sm text-stone-500">
-              Present this dynamic QR code to bus conductors and gate ticket marshals.
+              Demo pass only. It is not accepted by any conductor, gate or vehicle.
             </p>
           </div>
 
@@ -351,9 +354,9 @@ export const PassScreen: React.FC<Props> = ({
                   >
                     <ScanLine className="w-4 h-4 text-orange-400" />
                     <span>
-                      {isVerifying 
-                        ? 'Simulating Conductor Verification Handshake...' 
-                        : 'Simulate Conductor Ticket Scan (Audit Verification)'
+                      {isVerifying
+                        ? 'Simulating conductor scan…'
+                        : 'Simulate a conductor scan (demo)'
                       }
                     </span>
                   </button>
@@ -373,7 +376,7 @@ export const PassScreen: React.FC<Props> = ({
                         <AlertCircle className="w-4 h-4 text-red-600" />
                       )}
                       <span>
-                        {verificationResult.valid ? 'Pass Verified Successfully' : 'Verification Rejected'}
+                        {verificationResult.valid ? 'Demo scan accepted' : 'Demo scan rejected'}
                       </span>
                     </div>
                     <p className="text-[11px]">

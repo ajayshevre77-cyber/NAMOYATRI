@@ -104,6 +104,21 @@ export function requireRole(...allowedRoles: string[]) {
 }
 
 /**
+ * Middleware: rejectSuspendedAccount
+ * Blocks accounts an administrator has suspended. Use after requireAuth.
+ */
+export function rejectSuspendedAccount(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  if (req.user?.verificationStatus === 'SUSPENDED') {
+    res.status(403).json({
+      error: 'This account is suspended and cannot make requests. Please contact the helpdesk.',
+      code: 'ACCOUNT_SUSPENDED',
+    });
+    return;
+  }
+  next();
+}
+
+/**
  * Helper to prevent IDOR (Insecure Direct Object Reference)
  * Verifies that the authenticated user owns the resource or is ADMIN
  */

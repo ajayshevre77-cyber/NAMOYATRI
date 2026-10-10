@@ -94,6 +94,22 @@ export const VerificationBadge: React.FC<Props> = ({
         </span>
       );
 
+    // Demo listings nobody has checked. Distinct from "Community Info", which
+    // would wrongly imply the data came from the community.
+    case 'unverified':
+      return (
+        <span
+          id="badge-not-verified"
+          className={`inline-flex items-center gap-1 font-medium rounded-full bg-stone-100 text-stone-600 border border-stone-300 ${
+            isSmall ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-sm'
+          }`}
+          title="Demo data. Not checked by the Kumbh administration or any partner."
+        >
+          <HelpCircle className={isSmall ? 'w-3.5 h-3.5 text-stone-500' : 'w-4 h-4 text-stone-500'} />
+          {showLabel && <span>Not verified</span>}
+        </span>
+      );
+
     case 'pending':
       return (
         <span 

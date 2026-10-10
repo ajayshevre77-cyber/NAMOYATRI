@@ -123,9 +123,9 @@ export const SafetySOSScreen: React.FC<Props> = ({
 
       {/* Honest Production Transparency Notice */}
       <PlaceholderNotice
-        title="Emergency Operations Center (DEOC) Protocol"
-        description="Pressing the SOS button creates an active incident ticket in the District Emergency Operations Center (DEOC) queue. For life-threatening emergencies, please also dial direct state emergency hotlines (112 / 108) immediately."
-        integrationName="District Emergency Cell Protocol"
+        title="In-app SOS is a demo and reaches no one"
+        description="The SOS button only records a demo ticket on this app's server. It does not alert the District Emergency Operations Center (DEOC), police or ambulance. In an emergency, call 112 or 108 directly."
+        integrationName="DEOC Integration"
       />
 
       {/* Big High-Visibility SOS Button */}
@@ -138,7 +138,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
             Pilgrim Emergency Panic SOS
           </h3>
           <p className="text-xs text-stone-300 max-w-sm mx-auto mt-0.5">
-            Press and hold for 3 seconds to generate an emergency panic dispatch ticket to the Kumbh Central Control Room.
+            Press and hold for 3 seconds to record a demo SOS ticket. No one is alerted. Call 112 or 108 for real help.
           </p>
         </div>
 
@@ -199,8 +199,9 @@ export const SafetySOSScreen: React.FC<Props> = ({
                 <Check className="w-4 h-4 text-emerald-400" />
                 <span>Ticket Generated: {activeSOSTicket.ticketNumber}</span>
               </span>
+              {/* The server's status is a simulation label; nothing was dispatched. */}
               <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-red-700 text-white rounded">
-                {activeSOSTicket.status}
+                Demo · not sent
               </span>
             </div>
             <p className="text-stone-300 text-[11px] leading-relaxed">
@@ -276,11 +277,11 @@ export const SafetySOSScreen: React.FC<Props> = ({
             </div>
           </a>
 
-          {/* Kumbh Control Center */}
-          <a
+          {/* Kumbh Control Center: no verified number yet, so nothing to dial.
+              A made-up number here could be called in a real emergency. */}
+          <div
             id="hotline-kumbh-control"
-            href="tel:180023302027"
-            className="p-3.5 bg-white border border-stone-200 hover:border-orange-300 rounded-2xl shadow-xs flex items-center justify-between transition group"
+            className="p-3.5 bg-white border border-stone-200 rounded-2xl shadow-xs flex items-center justify-between"
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
@@ -291,15 +292,14 @@ export const SafetySOSScreen: React.FC<Props> = ({
                   {t.kumbhControlRoom}
                 </h4>
                 <p className="text-[11px] text-stone-500">
-                  Toll Free: 1800-233-02027
+                  Number not yet published. Call 112 meanwhile.
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-1 text-orange-600 font-bold text-xs bg-orange-50 px-2.5 py-1.5 rounded-xl group-hover:bg-orange-600 group-hover:text-white transition">
-              <PhoneCall className="w-3.5 h-3.5" />
-              <span>Toll Free</span>
+            <div className="flex items-center gap-1 text-stone-500 font-bold text-xs bg-stone-100 px-2.5 py-1.5 rounded-xl">
+              <span>Not available</span>
             </div>
-          </a>
+          </div>
 
           {/* Lost & Found Desk trigger */}
           <div

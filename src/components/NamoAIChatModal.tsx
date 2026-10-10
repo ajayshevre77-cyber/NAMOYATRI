@@ -139,7 +139,7 @@ export const NamoAIChatModal: React.FC<Props> = ({
                 </span>
               </div>
               <p className="text-xs text-orange-100">
-                Grounded Pilgrim Knowledge & Assistance
+                Pilgrim guide (demo)
               </p>
             </div>
           </div>
@@ -155,7 +155,7 @@ export const NamoAIChatModal: React.FC<Props> = ({
         {/* Advisory banner */}
         <div className="bg-orange-50/90 border-b border-orange-100 px-3 py-1.5 text-[11px] text-orange-950 flex items-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5 text-orange-600 shrink-0" />
-          <span>Grounded in verified Nashik–Trimbakeshwar Kumbh guidelines. For life emergencies, dial 112 / 108.</span>
+          <span>Answers may be inaccurate and are not officially verified. Check official Kumbh sources. In an emergency, call 112 / 108.</span>
         </div>
 
         {/* Chat Message List */}
@@ -207,7 +207,7 @@ export const NamoAIChatModal: React.FC<Props> = ({
               </div>
               <div className="bg-white border border-stone-200 rounded-2xl px-3.5 py-2 flex items-center gap-2">
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-600" />
-                <span>Namo AI is retrieving verified Kumbh records...</span>
+                <span>Namo AI is thinking…</span>
               </div>
             </div>
           )}

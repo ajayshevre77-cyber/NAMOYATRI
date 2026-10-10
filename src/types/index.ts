@@ -138,7 +138,6 @@ export interface TransportOption {
   baseFare: number;
   perKmRate: number;
   estimatedWaitMins: number;
-  isRegulatedFare: boolean;
   icon: string;
   disclaimer: string;
 }
@@ -151,12 +150,20 @@ export interface RideBooking {
   fromLocation: string;
   toLocation: string;
   transportType: TransportType;
+  passengers: number;
+  /** ISO time of a scheduled ride; null means the pilgrim is leaving now. */
+  departAt: string | null;
+  distanceKm: number;
   estimatedFare: number;
   estimatedTimeMins: number;
+  /** The server prices every ride with its demo estimator; client fares are ignored. */
+  fareBasis: 'DEMO_ESTIMATE';
   status: 'requested' | 'driver_assigned' | 'in_transit' | 'completed' | 'cancelled';
+  /** No real driver or vehicle is ever dispatched by this demo. */
+  dispatchStatus: 'DEMO_NOT_DISPATCHED';
   createdAt: string;
   paymentMethod: 'cash' | 'pass' | 'upi_placeholder';
-  isDemoSimulation: boolean;
+  sourceType: InformationSourceType;
 }
 
 export type PassType = '1_day' | '3_day' | '7_day' | 'custom_family';
@@ -170,7 +177,6 @@ export interface MobilityPassProduct {
   };
   durationDays: number;
   priceInr: number;
-  isRegulatedTariff: boolean;
   eligibleTransport: string[];
   terms: string[];
 }
@@ -212,7 +218,7 @@ export interface Volunteer {
   id: string;
   name: string;
   phoneMasked: string;
-  badgeType: 'namo_verified' | 'partner_ngo' | 'official_authorized';
+  badgeType: 'namo_verified' | 'partner_ngo' | 'official_authorized' | 'unverified';
   languages: string[];
   expertise: VolunteerExpertise[];
   availabilityStatus: 'available' | 'busy' | 'offline';

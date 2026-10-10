@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import { timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
@@ -17,7 +18,7 @@ import {
 } from './src/data/kumbhData';
 
 import { AuthenticatedRequest, ServerUserRole, ServerVerificationStatus } from './server/types';
-import { requireAuth, optionalAuth, requireRole, checkResourceOwnership } from './server/middleware/auth';
+import { requireAuth, optionalAuth, requireRole, checkResourceOwnership, rejectSuspendedAccount } from './server/middleware/auth';
 import { 
   securityHeaders, 
   secureCors, 
@@ -26,11 +27,14 @@ import {
 } from './server/middleware/security';
 import { 
   validateIdParam, 
-  rejectPrivilegedFields, 
-  validateRideRequestBody, 
-  validatePassPurchaseBody, 
-  validateEmergencyReportBody 
+  rejectPrivilegedFields,
+  validateRideRequestBody,
+  validatePassPurchaseBody,
+  validateEmergencyReportBody,
+  checkTripFields,
+  ValidRideRequest
 } from './server/middleware/validation';
+import { estimateTrip } from './src/lib/fare';
 import { recordAuditEvent, getAuditLogs } from './server/audit';
 import { assignUserRoleServerSide, resolveServerRoleAndStatus } from './server/firebaseAdmin';
 
@@ -73,9 +77,16 @@ interface RideRecord {
   fromLocation: string;
   toLocation: string;
   transportType: string;
+  passengers: number;
+  /** ISO time of a scheduled ride; null means leave now. */
+  departAt: string | null;
+  distanceKm: number;
   estimatedFare: number;
   estimatedTimeMins: number;
+  fareBasis: 'DEMO_ESTIMATE';
   status: 'requested' | 'driver_assigned' | 'in_transit' | 'completed' | 'cancelled';
+  /** Nothing leaves this server: no real driver or vehicle is ever dispatched. */
+  dispatchStatus: 'DEMO_NOT_DISPATCHED';
   createdAt: string;
   paymentMethod: string;
   sourceType: 'DEMO';
@@ -220,21 +231,35 @@ const rideBookings: RideRecord[] = [
     fromLocation: 'Nashik Road Railway Station',
     toLocation: 'Ramkund Panchavati',
     transportType: 'electric_shuttle',
+    passengers: 1,
+    departAt: null,
+    distanceKm: 8.4,
     estimatedFare: 15,
     estimatedTimeMins: 22,
+    fareBasis: 'DEMO_ESTIMATE',
     status: 'driver_assigned',
+    dispatchStatus: 'DEMO_NOT_DISPATCHED',
     createdAt: '10 mins ago',
     paymentMethod: 'pass',
     sourceType: 'DEMO',
   },
 ];
 
+/**
+ * Owner of seeded sample records. No sign-in ever resolves to this ID, so the
+ * samples are never returned as anybody's own data.
+ */
+const DEMO_SEED_OWNER_ID = 'demo_seed_owner';
+
+/** Pass tokens are random strings, not signed. Say so rather than imply HMAC. */
+const PASS_TOKEN_ALGORITHM = 'DEMO_RANDOM_TOKEN_UNSIGNED';
+
 const userPasses: PassRecord[] = [
   {
     id: 'pass_init_01',
     passRefNumber: 'NY-KM27-8942-X',
-    userId: 'usr_guest_01',
-    userName: 'Pilgrim Yatri',
+    userId: DEMO_SEED_OWNER_ID,
+    userName: 'Sample Pilgrim (demo record)',
     passType: '3_day',
     validFrom: new Date().toLocaleDateString('en-GB'),
     validTo: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB'),
@@ -243,7 +268,7 @@ const userPasses: PassRecord[] = [
       tokenHash: 'NY_SECURE_DEMO_HASH_991',
       issuedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      securityAlgorithm: 'HMAC_SHA256_SPEC',
+      securityAlgorithm: PASS_TOKEN_ALGORITHM,
       conductorVerificationKeyId: 'KUMBH_CONDUCTOR_KEY_2027',
     },
     ridesUsedCount: 4,
@@ -341,40 +366,28 @@ app.get('/api/transport/options', publicLimiter, (req: Request, res: Response) =
   res.json({ options: MOCK_TRANSPORT_OPTIONS });
 });
 
+// Same estimator and the same accepted trips as /api/rides/request, so a quote
+// always matches the fare the ride is stored with.
 app.post('/api/transport/estimate', publicLimiter, (req: Request, res: Response) => {
-  const { from, to, transportType } = req.body;
-  if (!from || !to || typeof from !== 'string' || typeof to !== 'string') {
-    res.status(400).json({ error: 'Valid pickup (from) and drop (to) locations are required' });
+  const problem = checkTripFields(req.body);
+  if (problem) {
+    res.status(400).json(problem);
     return;
   }
 
-  let distanceKm = 8.5;
-  const lowerFrom = from.toLowerCase();
-  const lowerTo = to.toLowerCase();
-
-  if ((lowerFrom.includes('station') || lowerFrom.includes('nashik road')) && lowerTo.includes('trimbak')) {
-    distanceKm = 36.0;
-  } else if (lowerFrom.includes('ramkund') && lowerTo.includes('trimbak')) {
-    distanceKm = 28.5;
-  } else if (lowerFrom.includes('station') && (lowerTo.includes('ramkund') || lowerTo.includes('panchavati'))) {
-    distanceKm = 9.2;
-  } else if (lowerFrom.includes('parking') || lowerFrom.includes('adgaon')) {
-    distanceKm = 7.4;
-  }
-
-  const option = MOCK_TRANSPORT_OPTIONS.find(o => o.type === transportType) || MOCK_TRANSPORT_OPTIONS[0];
-  const calculatedFare = Math.round(option.baseFare + (distanceKm * option.perKmRate));
-  const estimatedTimeMins = Math.round(distanceKm * 2.2 + 5);
+  const { from, to, transportType } = req.body;
+  const option = MOCK_TRANSPORT_OPTIONS.find(o => o.type === transportType)!;
+  const estimate = estimateTrip(option, from, to);
 
   res.json({
     from,
     to,
     transportType: option.type,
-    distanceKm,
-    estimatedFareInr: calculatedFare,
-    estimatedTimeMins,
-    isRegulatedFare: true,
-    policyNotice: 'Regulated Simhastha Kumbh 2027 tariff approved by Nashik District Transport Authority.',
+    distanceKm: estimate.distanceKm,
+    estimatedFareInr: estimate.estimatedFare,
+    estimatedTimeMins: estimate.estimatedTimeMins,
+    fareBasis: 'DEMO_ESTIMATE',
+    notice: 'Demo estimate only. Not an official or regulated fare; distance is approximate.',
   });
 });
 
@@ -383,18 +396,33 @@ app.get('/api/passes/products', publicLimiter, (req: Request, res: Response) => 
   res.json({ products: MOCK_PASS_PRODUCTS });
 });
 
+/** Constant-time comparison, so response timing does not leak how much of a token matched. */
+function tokensMatch(expected: string, supplied: string): boolean {
+  const a = Buffer.from(expected);
+  const b = Buffer.from(supplied);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 // Conductor / Gate QR Validation (Conductor scanner endpoint)
 app.post('/api/passes/verify', publicLimiter, (req: Request, res: Response) => {
   const { passRefNumber, tokenHash } = req.body;
 
   if (!passRefNumber || typeof passRefNumber !== 'string') {
-    res.status(400).json({ valid: false, reason: 'passRefNumber is required' });
+    res.status(400).json({ valid: false, reason: 'passRefNumber is required', code: 'PASS_REF_REQUIRED' });
+    return;
+  }
+  // Without the token, the short reference number alone would reveal the
+  // holder's name and let anyone spend their rides.
+  if (!tokenHash || typeof tokenHash !== 'string') {
+    res.status(400).json({ valid: false, reason: 'tokenHash is required', code: 'PASS_TOKEN_REQUIRED' });
     return;
   }
 
+  // An unknown reference and a wrong token get the same answer, so this
+  // endpoint cannot be used to discover which pass references exist.
   const pass = userPasses.find(p => p.passRefNumber === passRefNumber);
-  if (!pass) {
-    res.status(404).json({ valid: false, reason: 'Pass record not found in central registry' });
+  if (!pass || !tokensMatch(pass.qrSecureTokenSpec.tokenHash, tokenHash)) {
+    res.status(404).json({ valid: false, reason: 'No pass matches this reference and token.', code: 'PASS_NOT_FOUND' });
     return;
   }
 
@@ -414,7 +442,7 @@ app.post('/api/passes/verify', publicLimiter, (req: Request, res: Response) => {
     ridesUsedCount: pass.ridesUsedCount,
     verificationTimestamp: new Date().toISOString(),
     securityAlgorithm: pass.qrSecureTokenSpec.securityAlgorithm,
-    conductorNotice: 'Valid pilgrim mobility pass for Nashik–Trimbakeshwar network.',
+    conductorNotice: 'Demo pass check only. This pass is not valid on any real vehicle.',
   });
 });
 
@@ -455,13 +483,13 @@ app.post('/api/ai/chat', aiLimiter, async (req: Request, res: Response) => {
 
   if (ai) {
     try {
-      const systemInstruction = `You are Namo AI, an official digital guide and service companion for pilgrims attending the Nashik–Trimbakeshwar Simhastha Kumbh 2027 in Maharashtra, India.
+      const systemInstruction = `You are Namo AI, the digital guide in Namo Yatri, a demo app for pilgrims attending the Nashik–Trimbakeshwar Simhastha Kumbh 2027 in Maharashtra, India. Namo Yatri is not an official government service; never claim that your information is officially verified.
 Always be respectful, calm, helpful, and culturally mindful.
 Language mode: ${language === 'hi' ? 'Hindi' : language === 'mr' ? 'Marathi' : 'English'}.
 Guidelines:
 1. Provide accurate pilgrimage guidance for Nashik (Ramkund, Panchavati, Kalaram Mandir, Tapovan, Sadhu Gram) and Trimbakeshwar (Jyotirlinga, Kushavarta Kund, Brahmagiri).
-2. For transport, explain that Namo Yatri offers regulated feeder shuttles, metered autos, and multi-day mobility passes.
-3. For emergencies, direct users to emergency SOS (108 for medical, 112 for police).
+2. For transport, explain that ride requests and mobility passes in this app are a demo: no vehicle is dispatched, no payment is taken, and fares are estimates, not official or regulated rates. Point users to official transport operators for real travel.
+3. For emergencies, tell users to call 112 (all emergencies) or 108 (ambulance) directly. The in-app SOS is a demo and does not reach emergency services.
 4. Always clarify that live real-time crowd advisories come from the District Disaster Management Authority (DDMA). Keep answers concise, clear, and actionable.`;
 
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -489,22 +517,22 @@ Guidelines:
     }
   }
 
-  // Grounded local domain fallback
+  // Built-in fallback answers, used when Gemini is not configured or fails.
   const q = query.toLowerCase();
   let reply = '';
 
   if (q.includes('trimbakeshwar') || q.includes('त्र्यंबकेश्वर')) {
     reply = language === 'hi'
-      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नासिक शहर से लगभग २८ किमी दूर है। आप नासिक रोड या पंचवटी से नमो इलेक्ट्रिक शटल अथवा अधिकृत कुंभ बस ले सकते हैं।'
+      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नासिक शहर से लगभग २८ किमी दूर है। बस और शटल सेवाओं के लिए आधिकारिक कुंभ सूचनाएँ देखें।'
       : language === 'mr'
-      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नाशिक शहरापासून सुमारे २८ किमी अंतरावर आहे. नाशिक रोड किंवा मध्यवर्ती बस स्थानकावरून नमो इलेक्ट्रिक शटल व एसटी विशेष बसेस उपलब्ध आहेत.'
-      : 'Trimbakeshwar Jyotirlinga is situated 28 km west of Nashik at the foothills of Brahmagiri. Regulated Namo Electric Shuttles and MSRTC Kumbh buses run frequently.';
+      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नाशिक शहरापासून सुमारे २८ किमी अंतरावर आहे. बस व शटल सेवांसाठी अधिकृत कुंभ सूचना पहा.'
+      : 'Trimbakeshwar Jyotirlinga is about 28 km west of Nashik, at the foothills of Brahmagiri. Check official Kumbh announcements for bus and shuttle services.';
   } else if (q.includes('ramkund') || q.includes('रामकुंड') || q.includes('snan') || q.includes('स्नान')) {
     reply = language === 'hi'
-      ? 'रामकुंड पंचवटी में पवित्र गोदावरी तट पर स्थित मुख्य शाही स्नान स्थल है। यह २४ घंटे खुला रहता है।'
+      ? 'रामकुंड पंचवटी में पवित्र गोदावरी तट पर स्थित मुख्य शाही स्नान स्थल है।'
       : language === 'mr'
       ? 'रामकुंड हे पंचवटी येथे पवित्र गोदावरी नदीकाठी वसलेले मुख्य शाही स्नान तीर्थ आहे.'
-      : 'Ramkund in Panchavati is the sacred holy bathing ghat of Nashik Kumbh, open 24 hours with life guards on duty.';
+      : 'Ramkund in Panchavati, on the banks of the Godavari, is the main holy bathing ghat of the Nashik Kumbh.';
   } else {
     reply = language === 'hi'
       ? 'नमस्ते। मैं नमो एआई हूँ। सिंहस्थ कुंभ २०२७ के पवित्र स्थल, परिवहन अथवा स्वयंसेवक सहायता हेतु आप मुझसे पूछ सकते हैं।'
@@ -513,10 +541,14 @@ Guidelines:
       : 'Namaste. I am Namo AI, your pilgrimage companion for Simhastha Kumbh 2027.';
   }
 
+  // Always label a fallback, including when Gemini is configured but the call
+  // failed, so a canned answer is never mistaken for an AI one.
   res.json({
     reply,
-    source: 'simhastha-grounded-knowledge-agent',
-    note: process.env.GEMINI_API_KEY ? undefined : 'Running grounded local pilgrimage knowledge agent.',
+    source: 'built-in-answers',
+    note: process.env.GEMINI_API_KEY
+      ? 'The AI service could not be reached, so this is a built-in answer, not an AI response.'
+      : 'AI is not configured on this server, so this is a built-in answer, not an AI response.',
   });
 });
 
@@ -600,10 +632,15 @@ app.get('/api/passes/my-passes', bookingLimiter, requireAuth, (req: Authenticate
   res.json({ passes: userOwnedPasses });
 });
 
-// Backwards compatibility endpoint for client views - enforces req.user.uid
+// Backwards compatibility endpoint for client views - enforces req.user.uid.
+// A guest has no passes. It used to be answered with a seeded pass that
+// belonged to someone else, so every visitor saw that pass as their own.
 app.get('/api/passes/user-passes', bookingLimiter, optionalAuth, (req: AuthenticatedRequest, res: Response) => {
-  const uid = req.user ? req.user.uid : 'usr_guest_01';
-  const passes = userPasses.filter(p => p.userId === uid);
+  if (!req.user) {
+    res.json({ passes: [] });
+    return;
+  }
+  const passes = userPasses.filter(p => p.userId === req.user!.uid);
   res.json({ passes });
 });
 
@@ -649,7 +686,7 @@ app.post('/api/passes/purchase', bookingLimiter, requireAuth, validatePassPurcha
       tokenHash: 'NY_SECURE_' + Math.random().toString(36).substring(2, 10).toUpperCase(),
       issuedAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString(),
-      securityAlgorithm: 'HMAC_SHA256_SPEC',
+      securityAlgorithm: PASS_TOKEN_ALGORITHM,
       conductorVerificationKeyId: 'KUMBH_CONDUCTOR_KEY_2027',
     },
     ridesUsedCount: 0,
@@ -706,10 +743,13 @@ app.get('/api/rides/:rideId', bookingLimiter, requireAuth, validateIdParam('ride
   res.json({ ride });
 });
 
-// Request Ride - binds strictly to req.user.uid
-app.post('/api/rides/request', bookingLimiter, requireAuth, validateRideRequestBody, (req: AuthenticatedRequest, res: Response) => {
+// Request Ride - binds strictly to req.user.uid.
+// The fare is computed here; any fare in the body is ignored. The request is
+// only recorded in this demo store: no driver or vehicle is dispatched.
+app.post('/api/rides/request', bookingLimiter, requireAuth, rejectSuspendedAccount, validateRideRequestBody, (req: AuthenticatedRequest, res: Response) => {
   const user = req.user!;
-  const { from, to, transportType, estimatedFare, estimatedTimeMins } = req.body;
+  const { from, to, option, passengers, departAt } = res.locals.rideRequest as ValidRideRequest;
+  const estimate = estimateTrip(option, from, to);
 
   const newRide: RideRecord = {
     id: 'bk_' + Date.now(),
@@ -717,11 +757,16 @@ app.post('/api/rides/request', bookingLimiter, requireAuth, validateRideRequestB
     userId: user.uid, // Strictly bound to authenticated UID
     fromLocation: from,
     toLocation: to,
-    transportType: transportType || 'electric_shuttle',
-    estimatedFare: estimatedFare || 45,
-    estimatedTimeMins: estimatedTimeMins || 25,
+    transportType: option.type,
+    passengers,
+    departAt,
+    distanceKm: estimate.distanceKm,
+    estimatedFare: estimate.estimatedFare,
+    estimatedTimeMins: estimate.estimatedTimeMins,
+    fareBasis: 'DEMO_ESTIMATE',
     status: 'requested',
-    createdAt: 'Just now',
+    dispatchStatus: 'DEMO_NOT_DISPATCHED',
+    createdAt: new Date().toISOString(),
     paymentMethod: 'pass',
     sourceType: 'DEMO',
   };
@@ -733,11 +778,15 @@ app.post('/api/rides/request', bookingLimiter, requireAuth, validateRideRequestB
     actorRole: user.role,
     action: 'REQUEST_TRANSPORT',
     targetId: newRide.id,
-    details: `Transport requested: ${newRide.transportType} from ${newRide.fromLocation} to ${newRide.toLocation}`,
+    details: `Transport requested: ${newRide.transportType} for ${passengers} from ${newRide.fromLocation} to ${newRide.toLocation}, ${departAt ? `scheduled ${departAt}` : 'leaving now'}`,
     ipAddress: req.ip,
   });
 
-  res.json({ success: true, booking: newRide });
+  res.json({
+    success: true,
+    booking: newRide,
+    notice: 'Demo request recorded. No driver or vehicle has been dispatched.',
+  });
 });
 
 // Driver-Restricted: get assigned rides

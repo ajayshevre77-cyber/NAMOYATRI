@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bus, Car, Zap, Bike, Users, Clock } from 'lucide-react';
 import { TransportOption, TransportType } from '../types';
+import { fareFor } from '../lib/fare';
 
 interface Props {
   options: TransportOption[];
@@ -18,12 +19,9 @@ const ICONS: Record<TransportType, React.ComponentType<{ className?: string }>> 
   govt_bus: Bus,
 };
 
-export const fareFor = (option: TransportOption, distanceKm: number) =>
-  Math.round(option.baseFare + distanceKm * option.perKmRate);
-
 /**
- * Radio group of transport choices, each showing its regulated fare for the
- * current trip. Arrow keys move between options because it is a real radiogroup.
+ * Radio group of transport choices, each showing its demo fare estimate for
+ * the current trip. Arrow keys move between options because it is a real radiogroup.
  */
 export const RideOptions: React.FC<Props> = ({
   options,
@@ -74,9 +72,7 @@ export const RideOptions: React.FC<Props> = ({
               <span className={`text-base font-bold ${isSelected ? 'text-orange-700' : 'text-stone-900'}`}>
                 ₹{fareFor(option, distanceKm)}
               </span>
-              {option.isRegulatedFare && (
-                <span className="text-[10px] font-medium text-emerald-700">regulated</span>
-              )}
+              <span className="text-[10px] font-medium text-stone-500">estimate</span>
             </span>
 
             <span className="flex items-center gap-2 text-[10px] text-stone-500">

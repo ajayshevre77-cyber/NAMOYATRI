@@ -46,7 +46,7 @@ export const PlaceDetailModal: React.FC<Props> = ({
   };
 
   const handleDirections = () => {
-    // Open directions in external mapping service using legitimate coordinates
+    // Hand off to Google Maps. The stored coordinates are approximate.
     const url = `https://www.google.com/maps/search/?api=1&query=${place.location.latitude},${place.location.longitude}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
@@ -168,7 +168,7 @@ export const PlaceDetailModal: React.FC<Props> = ({
             <div className="p-3 bg-stone-50 border border-stone-200 rounded-xl">
               <div className="flex items-center gap-1.5 font-semibold text-stone-900 mb-1">
                 <MapPin className="w-3.5 h-3.5 text-orange-600" />
-                <span>Official Address</span>
+                <span>Address</span>
               </div>
               <p className="text-stone-600 truncate">{place.location.address}</p>
             </div>
@@ -204,7 +204,7 @@ export const PlaceDetailModal: React.FC<Props> = ({
               <span>{t.requestVolunteerHere}</span>
             </button>
             <p className="text-[11px] text-center text-stone-500 mt-1">
-              Connect with Namo Verified & District Empanelled Seva volunteers assigned to this zone.
+              Browse volunteer listings for this area. Volunteer listings are demo data.
             </p>
           </div>
         </div>

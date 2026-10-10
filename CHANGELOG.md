@@ -4,6 +4,89 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-10
+
+The headline: **the app no longer shows anyone a pass that isn't theirs, every
+ride type can now be requested, and the app stops claiming things that are not
+true.** This is phase 1 of the user-side MVP. The interactive map comes next.
+
+### Security: passes
+
+**Every visitor was shown someone else's pass.** When nobody was signed in, the
+server answered "your passes" with a stored sample pass, so every guest saw it
+as their own. Signed-in users had the opposite problem: the app never sent their
+sign-in with that request, so they also got the sample pass instead of their
+own. Now a guest gets no passes and a signed-in user gets only theirs. The list
+refreshes when someone signs in or out, so one person's pass never stays on
+screen for the next.
+
+**A pass could be looked up by its short reference number alone.** The conductor
+check endpoint returned the holder's name for any reference number, and anyone
+could use it to spend a stranger's rides. It now also requires the pass's secret
+token, and a wrong token gets the same answer as a pass that does not exist.
+
+### Fixed: ride requests
+
+- **Auto, Cab and Bus can now be requested.** Before, only the Electric Shuttle
+  worked; the other three were silently rejected.
+- **The server decides the fare.** It used to save whatever fare the phone sent.
+  It now works the fare out itself and ignores the phone's number. The phone
+  shows a preview using the same calculation, so the two always match.
+- **Passengers and scheduled times are kept.** Both were collected by the form
+  and then thrown away. They are now checked (1–6 passengers, never more than
+  the vehicle seats; a time up to 7 days ahead, not in the past) and saved.
+- **Clear errors.** Every rejection says what was wrong (for example "That
+  departure time has already passed") instead of failing silently. Suspended
+  accounts are refused.
+- **One booking form.** The Travel tab now uses the same form as the ride
+  booking page, including asking a guest to sign in first. The old Travel form
+  sent ride types the server refused and hid every error.
+- **No more "booking confirmed" theatre.** After a request, the app says plainly:
+  *demo request recorded, no driver or vehicle has been dispatched.*
+
+The swap-pickup-and-destination button is hidden for now. The pickup and
+destination lists share no places, so swapping always produced an invalid trip.
+It comes back automatically once the map work gives both fields one list.
+
+### Changed: removed claims that were not true
+
+Throughout the pilgrim screens, the app had been presenting sample data as
+official. Removed or corrected:
+
+- "Verified GPS coordinates", "All official Kumbh sites verified", and the
+  "Kumbh Official Verified" badge on every place. Places now show **Not
+  verified**, and the two invented facilities (the Sector 3 medical base and
+  parking hub P4) are labelled as not real.
+- "Government-regulated", "statutory" and "RTO approved" fares, on rides and on
+  passes. Fares are now labelled as demo estimates.
+- Named real organisations (Red Cross, MSRTC, Bharat Seva Mandal) attached to
+  sample volunteers and buses, with made-up accreditation numbers.
+- "Request logged into Nashik Transport Partner Registry", "volunteer has been
+  notified", "application submitted to Kumbh Seva Registry". None of these
+  happened. The volunteer sign-up also used to say "submitted" even when it
+  failed; it now shows the real result.
+- **Emergency screen:** the SOS button said it alerted the District Emergency
+  Operations Center. It does not, and now says so and points to 112 / 108. A
+  made-up "Kumbh Control Room" toll-free number that could be dialled from the
+  emergency screen is gone.
+- Namo AI no longer calls itself official, and when it falls back to its
+  built-in answers it now always says so, even when the AI service fails.
+- The pass screen's "cryptographically signed QR" claim. The pass token is a
+  random code, and the screen now says so.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds.
+- Security suite: **14 of 14 pass** (4 new scenarios for the pass fixes).
+- New ride request suite, `tests/rides.test.ts`: **14 of 14 pass**.
+- Run against the code from before this change, the new tests fail where they
+  should: 3 pass scenarios and 12 ride scenarios.
+- The production build was started and the fixed endpoints were called directly.
+
+The driver, volunteer, business and admin dashboards were not changed.
+
+---
+
 ## 2026-10-07
 
 ### Security — closed the two open items from the hardening brief
