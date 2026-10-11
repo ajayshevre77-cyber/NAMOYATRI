@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkles, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { 
   UserRole, 
   Place, 
@@ -132,10 +132,19 @@ function AppContent() {
   }, []);
 
   // Reload on sign-in and sign-out too, so "Your passes" always belongs to
-  // whoever is signed in now and is cleared for a guest.
+  // whoever is signed in now and is cleared for a guest. The old list is
+  // dropped at once: if the reload is slow or fails, the previous user's
+  // passes must not stay on screen as the new user's.
   useEffect(() => {
+    setUserPasses([]);
     loadFeeds();
   }, [loadFeeds, firebaseUser?.uid]);
+
+  // The server never moves a pass to 'expired', so the expiry time is checked too.
+  const activePassCount = userPasses.filter(p => {
+    const expiresAt = p.qrSecureTokenSpec?.expiresAt;
+    return p.status === 'active' && !(expiresAt && Date.parse(expiresAt) <= Date.now());
+  }).length;
 
   const handleRetryFeeds = async () => {
     setFeedsRetrying(true);
@@ -167,6 +176,8 @@ function AppContent() {
       />
 
       {/* Main Content Area */}
+      {/* On phones, bottom padding clears the fixed 4rem nav. From sm up, each
+          view's own bottom padding makes up the rest. */}
       <main className="flex-1 w-full max-w-5xl mx-auto px-3.5 sm:px-6 pt-4 pb-20 sm:pb-12">
         {/* Honest notice when the API could not be reached and mock data is showing */}
         {failedFeeds.length > 0 && !noticeDismissed && (
@@ -192,6 +203,7 @@ function AppContent() {
                 onOpenAI={() => setIsNamoAIOpen(true)}
                 announcements={announcements}
                 places={places}
+                activePassCount={activePassCount}
               />
             )}
 
@@ -297,16 +309,9 @@ function AppContent() {
         )}
       </main>
 
-      {/* Floating Namo AI Assistant Button (for quick access) */}
-      <button
-        id="floating-namo-ai-btn"
-        onClick={() => setIsNamoAIOpen(true)}
-        className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-40 bg-gradient-to-r from-orange-600 to-amber-600 text-white p-3.5 sm:px-4 sm:py-3 rounded-full shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition flex items-center gap-2 border-2 border-amber-300"
-        title="Open Namo AI Guide"
-      >
-        <Sparkles className="w-5 h-5 text-amber-200" />
-        <span className="text-xs font-bold hidden sm:inline">Ask Namo AI</span>
-      </button>
+      {/* Namo AI opens from the header button (every screen size) and the Home
+          "Namo AI Assistant" tile. There is no floating button: it covered
+          Home tiles, place cards and the ride form. */}
 
       {/* Bottom Navigation for Tourist mode */}
       {currentRole === 'tourist' && (
@@ -315,7 +320,7 @@ function AppContent() {
           onTabChange={setActiveTab}
           onSelectTab={setActiveTab}
           currentLanguage={currentLanguage}
-          activePassCount={userPasses.filter(p => p.status === 'active').length}
+          activePassCount={activePassCount}
         />
       )}
 

@@ -3,6 +3,7 @@ import { Search, MapPin, Filter, Sparkles, Navigation } from 'lucide-react';
 import { Place, PlaceCategory } from '../types';
 import { SupportedLanguage, translations } from '../i18n';
 import { VerificationBadge } from '../components/VerificationBadge';
+import { PlaceImage } from '../components/PlaceImage';
 
 interface Props {
   places: Place[];
@@ -112,11 +113,12 @@ export const ExploreScreen: React.FC<Props> = ({
           >
             {/* Card Image */}
             <div className="relative h-40 bg-stone-100 overflow-hidden">
-              <img
-                src={place.imageUrl}
+              <PlaceImage
+                place={place}
                 alt={place.name[currentLanguage] || place.name.en}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                className="w-full h-full"
+                iconClassName="w-9 h-9"
+                showLabel
               />
               <div className="absolute top-2.5 left-2.5">
                 <VerificationBadge tier={place.verificationTier} size="sm" />

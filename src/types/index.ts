@@ -124,7 +124,8 @@ export interface Place {
   verificationTier: VerificationTier;
   isOfficialKumbhSite: boolean;
   distanceKmPlaceholder: number;
-  imageUrl: string;
+  /** Only a photo known to show this exact place. Without one, PlaceImage shows a category placeholder. */
+  imageUrl?: string;
   crowdLevel?: 'low' | 'moderate' | 'high' | 'peak';
 }
 
@@ -274,9 +275,11 @@ export interface EmergencyCase {
   description: string;
   locationZone: string;
   timestamp: string;
-  status: 'logged' | 'dispatched_to_deoc' | 'attending' | 'resolved';
-  isSimulatedEmergency: boolean;
-  deocIntegrationNotice: string;
+  // A demo report is only recorded on the demo server; nobody is dispatched.
+  status: 'recorded' | 'resolved';
+  sourceType: 'DEMO';
+  dispatchStatus: 'DEMO_NOT_DISPATCHED';
+  notice: string;
 }
 
 export interface LostPersonReport {

@@ -106,7 +106,6 @@ export const translations = {
     fireEmergency: 'Fire & Rescue (101)',
     kumbhControlRoom: 'Kumbh Control Room',
     reportSafetyIssue: 'Report Safety Incident',
-    sosNotice: 'Emergency tickets are recorded in the District Emergency Operations Center (DEOC). Always dial local direct hotlines for life-threatening events.',
     
     // Roles
     roleTourist: 'Pilgrim / Tourist',
@@ -208,7 +207,6 @@ export const translations = {
     fireEmergency: 'अग्निशमन दल (१०१)',
     kumbhControlRoom: 'कुंभ नियंत्रण कक्ष',
     reportSafetyIssue: 'सुरक्षा रिपोर्ट दर्ज करें',
-    sosNotice: 'आपातकालीन मामले जिला आपदा नियंत्रण केंद्र (DEOC) में दर्ज होते हैं। गंभीर संकट में सीधे हेल्पलाइन पर कॉल करें।',
     
     roleTourist: 'तीर्थयात्री / पर्यटक',
     roleDriver: 'परिवहन सारथी',
@@ -308,7 +306,6 @@ export const translations = {
     fireEmergency: 'अग्निशमन दल (१०१)',
     kumbhControlRoom: 'कुंभ नियंत्रण कक्ष',
     reportSafetyIssue: 'सुरक्षा तक्रार नोंदवा',
-    sosNotice: 'आपत्कालीन प्रकरणांची नोंद जिल्हा आपत्ती निवारण कक्षात (DEOC) होते. तातडीच्या प्रसंगी थेट हेल्पलाइनवर संपर्क करा.',
     
     roleTourist: 'भाविक / पर्यटक',
     roleDriver: 'सारथी / चालक',

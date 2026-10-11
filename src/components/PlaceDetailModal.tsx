@@ -14,6 +14,7 @@ import {
 import { Place } from '../types';
 import { SupportedLanguage, translations } from '../i18n';
 import { VerificationBadge } from './VerificationBadge';
+import { PlaceImage } from './PlaceImage';
 
 interface Props {
   place: Place | null;
@@ -62,11 +63,11 @@ export const PlaceDetailModal: React.FC<Props> = ({
       >
         {/* Modal Image Header */}
         <div className="relative h-48 sm:h-56 bg-stone-900 overflow-hidden shrink-0">
-          <img 
-            src={place.imageUrl} 
+          {/* No icon here: the title and category sit over this panel. */}
+          <PlaceImage
+            place={place}
             alt={place.name[currentLanguage] || place.name.en}
-            referrerPolicy="no-referrer"
-            className="w-full h-full object-cover brightness-90"
+            className="w-full h-full brightness-90"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
 

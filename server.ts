@@ -124,9 +124,12 @@ interface EmergencyRecord {
   description: string;
   locationZone: string;
   timestamp: string;
-  status: 'dispatched_to_deoc' | 'field_unit_assigned' | 'resolved';
+  // Reports are only stored in this server's memory. There is no DEOC, police
+  // or ambulance integration, so nothing is ever dispatched or notified.
+  status: 'recorded' | 'resolved';
   sourceType: 'DEMO';
-  deocIntegrationNotice: string;
+  dispatchStatus: 'DEMO_NOT_DISPATCHED';
+  notice: string;
 }
 
 interface LostPersonRecord {
@@ -171,6 +174,12 @@ interface PartnerApplicationRecord {
   reviewedAt?: string;
 }
 
+// Sent with every SOS and incident report. Recording a report is not the same
+// as dispatching help: nothing leaves this server, so say so plainly.
+const SOS_DEMO_NOTICE =
+  'Demo report recorded. Emergency services have NOT been notified, and no one is on the way. ' +
+  'If you need help, call 112 or 108.';
+
 const emergencyCases: EmergencyRecord[] = [
   {
     id: 'emg_001',
@@ -182,9 +191,10 @@ const emergencyCases: EmergencyRecord[] = [
     description: '[DEMO DATA] Heat exhaustion and dehydration near Ramkund Step 4.',
     locationZone: 'ZONE_NASHIK_RAMKUND_01',
     timestamp: '15 mins ago',
-    status: 'dispatched_to_deoc',
+    status: 'recorded',
     sourceType: 'DEMO',
-    deocIntegrationNotice: 'Simulation: Queued to Nashik Civil Hospital Quick-Response Medical Unit.',
+    dispatchStatus: 'DEMO_NOT_DISPATCHED',
+    notice: SOS_DEMO_NOTICE,
   },
 ];
 
@@ -907,9 +917,10 @@ app.post('/api/safety/emergency', emergencyLimiter, optionalAuth, validateEmerge
     description: description || 'High-priority SOS trigger from mobile app.',
     locationZone: locationZone || 'Panchavati / Ramkund Sector',
     timestamp: 'Just now',
-    status: 'dispatched_to_deoc',
+    status: 'recorded',
     sourceType: 'DEMO',
-    deocIntegrationNotice: 'Simulation: Ticket logged to Nashik Simhastha District Emergency Operations Center (DEOC) queue. Dial direct 112 / 108 if cellular voice is operational.',
+    dispatchStatus: 'DEMO_NOT_DISPATCHED',
+    notice: SOS_DEMO_NOTICE,
   };
 
   emergencyCases.unshift(newEmergency);
@@ -924,7 +935,7 @@ app.post('/api/safety/emergency', emergencyLimiter, optionalAuth, validateEmerge
     severity: 'CRITICAL',
   });
 
-  res.json({ success: true, emergencyCase: newEmergency });
+  res.json({ success: true, emergencyCase: newEmergency, notice: SOS_DEMO_NOTICE });
 });
 
 // Emergency cases list:

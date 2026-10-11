@@ -46,6 +46,7 @@ export const AuthModal: React.FC<Props> = ({
     verifyPhoneOtp, 
     continueAsGuest,
     setupRecaptcha,
+    authModalGuestContinuation: guestContinuation,
   } = useAuth();
 
   const [mode, setMode] = useState<AuthMode>('welcome');
@@ -218,7 +219,7 @@ export const AuthModal: React.FC<Props> = ({
     setIsLoading(true);
     try {
       await requestPasswordReset(email);
-      setSuccessNotice('Password reset link has been dispatched to your email.');
+      setSuccessNotice('If an account uses this email, a password reset link has been sent to it.');
     } catch (err: any) {
       setErrorMessage(formatAuthError(err));
     } finally {
@@ -297,7 +298,7 @@ export const AuthModal: React.FC<Props> = ({
                   Protected Services Policy
                 </div>
                 <p>
-                  Browsing sacred ghats, timetable, and public announcements is open to everyone. Purchasing mobility passes, booking auto rides, safety SOS, or volunteering requires a verified account.
+                  Browsing places, timings and announcements is open to everyone. The SOS screen and its 112 / 108 call buttons work without an account. To request a demo ride or get a demo pass, sign in or continue as a guest.
                 </p>
               </div>
 
@@ -331,17 +332,31 @@ export const AuthModal: React.FC<Props> = ({
                     <div className="w-full border-t border-stone-200"></div>
                   </div>
                   <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-white px-2 text-stone-500 font-medium">Or continue exploring</span>
+                    <span className="bg-white px-2 text-stone-500 font-medium">
+                      {guestContinuation ? 'Or continue without an account' : 'Or continue exploring'}
+                    </span>
                   </div>
                 </div>
+
+                {/* With an action waiting, continuing as a guest runs it, so say what it does. */}
+                {guestContinuation?.explanation && (
+                  <p
+                    id="auth-guest-consequence"
+                    className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed flex items-start gap-2"
+                  >
+                    <Info className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" aria-hidden="true" />
+                    <span>{guestContinuation.explanation}</span>
+                  </p>
+                )}
 
                 <button
                   id="auth-continue-guest-btn"
                   onClick={continueAsGuest}
+                  aria-describedby={guestContinuation?.explanation ? 'auth-guest-consequence' : undefined}
                   className="w-full py-2.5 px-4 bg-white hover:bg-stone-50 text-stone-600 border border-stone-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-stone-400" />
-                  Continue as Guest (Limited Public Browsing)
+                  <Sparkles className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                  {guestContinuation?.label ?? 'Continue as Guest (Limited Public Browsing)'}
                 </button>
               </div>
             </div>
@@ -372,16 +387,16 @@ export const AuthModal: React.FC<Props> = ({
                 </div>
                 <p className="text-[11px] text-stone-500 mt-1.5 flex items-center gap-1">
                   <Lock className="w-3 h-3" />
-                  We send a 6-digit OTP via SMS. Your phone number is strictly private.
+                  We send a 6-digit code to this number by SMS.
                 </p>
               </div>
 
               <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
                 <div className="font-semibold flex items-center gap-1 mb-0.5">
                   <Info className="w-3.5 h-3.5 text-amber-700" />
-                  SMS Gateway Status
+                  About phone sign-in
                 </div>
-                Real-world Firebase phone OTP is dispatched through Google Cloud SMS gateway. If phone provider is in sandbox mode, you can also use Email authentication or Guest mode.
+                The code is sent through Firebase Authentication. Phone sign-in may not be available in this demo. If no code arrives, sign in with email or continue as a guest.
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -637,7 +652,7 @@ export const AuthModal: React.FC<Props> = ({
           {mode === 'forgot_password' && (
             <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
               <p className="text-xs text-stone-600">
-                Enter your email address and we'll dispatch an official Firebase password reset link.
+                Enter the email address you signed up with and we'll email you a link to reset your password.
               </p>
 
               <div>

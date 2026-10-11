@@ -4,6 +4,210 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-10 (acceptance fixes: SOS button and Namo AI button)
+
+The headline: **the three failures from the final acceptance check are fixed.**
+One SOS press now records exactly one demo report, the button really needs a
+3-second hold, it works from the keyboard and with a screen reader, and the
+floating Namo AI button that covered parts of Home is gone.
+
+### Fixed: the SOS button
+
+- **One press recorded two reports.** In development, React deliberately runs
+  some code twice to expose bugs. The SOS request was started from inside such
+  code, so every press sent two reports. The request now starts from a timer
+  with a guard, so one hold sends one report. While a report is being recorded,
+  further presses are ignored. Afterwards, a new hold works normally.
+- **"3 SECONDS" fired after about 2.1 seconds.** The button counted timer ticks,
+  which also run slower in background tabs. It now measures real elapsed time
+  and fires at 3 seconds, never sooner. Letting go earlier cancels, and the
+  screen says no report was recorded.
+- **Keyboard users could not use it at all.** Holding Enter or Space now works
+  like holding the button. The browser's usual "click" on those keys is
+  suppressed, so a keyboard hold cannot also fire a second action.
+- **Screen readers heard nothing.** A status message now counts down ("Keep
+  holding: 2 seconds left"), says when a hold was cancelled, and announces the
+  result, including that emergency services were NOT notified.
+- **Touch and mouse both still work.** A held finger is no longer mistaken for a
+  scroll, and a long press no longer opens the phone's context menu.
+
+### Removed: the floating Namo AI button
+
+It covered Home's quick-action tiles and place cards on phones. Namo AI still
+opens from the button in the top bar on every screen size, and from Home's
+*Namo AI Assistant* tile. On phones that top-bar button is now a larger 40×44
+target. The extra space reserved at the bottom of Home and Explore for the
+floating button is removed; the space for the bottom bar stays.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds.
+- Security suite **17/17**, ride request suite **14/14**.
+- New SOS hold suite, `tests/sos-hold.test.ts`: **9/9**. It covers:
+  - one hold giving one report, even with every step run twice as in
+    development mode;
+  - letting go early;
+  - the exact 3-second boundary, including a slow timer;
+  - repeated presses;
+  - Enter and Space;
+  - cancelling by moving away, by the phone, or by losing focus.
+
+  Two deliberately broken copies of the logic fail it: one that can submit
+  twice, and one that counts ticks.
+- In a browser, in development mode:
+  - **Mouse, touch and keyboard holds:** one report each. Early releases
+    recorded nothing, and real Space/Enter taps produced no click.
+  - **Layout at 320, 360, 390 and 1280px:** every Home tile, place card,
+    ride-form control and bottom-bar tab was clear of anything on top.
+  - **Console:** no errors.
+
+---
+
+## 2026-10-10 (final pass before the map: emergency wording)
+
+The headline: **the emergency screen no longer suggests that anyone was alerted.**
+The app has no link to the District Emergency Operations Center (DEOC), the
+police or any ambulance service. The server only stores reports in its own
+memory. The screen now says that, every time.
+
+### Fixed: the emergency (SOS) screen
+
+- **After pressing SOS, the app said the ticket was "logged to the DEOC queue".**
+  Behind the scenes every report was also marked "dispatched to DEOC". Neither
+  was true. The message now reads: **"Demo report recorded. Emergency services
+  have NOT been notified, and no one is on the way."** It is followed by
+  one-tap 112 and 108 links. The server now marks reports as *recorded, not
+  dispatched*.
+- **The incident report said it was "Forwarded to Sector Safety Marshal &
+  Municipal Health cell".** It was not sent anywhere. The form now says up front
+  that it is a demo that reaches no one, and the confirmation says emergency
+  services were NOT notified.
+- **Three of the four incident categories always failed, silently.** The server
+  rejected them, and the app showed nothing. All four now work, and any failure
+  is shown on screen. A failed SOS press now also says so and points to 112 /
+  108; before, nothing happened.
+- **The SOS screen showed a made-up location.** After a press it said
+  "Location: Panchavati / Ramkund Ghat Sector (Cell Tower Approximate)",
+  wherever you were. The app does not read your location, so it no longer
+  shows one.
+- **Other unsupported wording removed:**
+  - "HIGH-PRIORITY ASSISTANCE" is now "Demo · alerts no one".
+  - "medical camp coordination" is gone from the screen's description.
+  - The 108 card's "Ambulance & Trauma Medical Base" is now "Emergency
+    ambulance number".
+  - "Official Emergency Hotlines" is now "Emergency Numbers".
+  - An unused Hindi/Marathi/English sentence claiming tickets "are recorded in
+    the DEOC" was deleted.
+
+The 112 and 108 call buttons are unchanged.
+
+### Fixed: sign-in and passes
+
+- The phone sign-in note no longer claims a particular "Google Cloud SMS
+  gateway". It now says the code is sent through Firebase Authentication, and
+  that phone sign-in may not be available in this demo.
+- "Your phone number is strictly private" and "official Firebase password reset
+  link" are replaced with plain descriptions of what happens.
+- On the pass screen, the guest button no longer says "purchase". It reads
+  **Continue as guest and get demo pass (no payment)**. A note explains that
+  no payment is taken and that the pass is not valid on any real vehicle.
+
+### Fixed: admin top bar on phones
+
+For a signed-in administrator, the view switcher made the top bar wider than
+the screen: by 16–52px at 320px wide, and up to 12px at 360px. On phones it is
+now a small shield button that opens the same list. On computers it is
+unchanged, and nothing about who can see what changed.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds.
+- Security suite: **17 of 17 pass**, with 2 new scenarios:
+  - The emergency API never says a report was dispatched or sent to the DEOC,
+    for new reports and for the sample report.
+  - The SOS screen's text contains the "NOT been notified" statement and none
+    of the old dispatch claims. There is no screen-testing tool in this
+    project, so this one reads the screen's source text.
+- Both new scenarios fail on the previous version of the code, as they should.
+- Ride request suite: **14 of 14 pass**.
+- In a browser:
+  - A demo SOS press and a demo incident report were recorded only on the local
+    demo server. No call was placed and no outside service was contacted.
+  - The new messages appeared as written.
+  - The admin top bar was measured at 320–390px. Testing it signed in as an
+    admin was not allowed, so it was rebuilt from the same markup.
+
+---
+
+## 2026-10-10 (phase 1.5: fixes from the browser check)
+
+The headline: **a browser walk-through of phase 1 found screens that still said
+things that were not true, or got in the way on a phone. These are fixed.** The
+interactive map is still next.
+
+### Fixed
+
+- **Home said every visitor had an active pass.** The *My Pass* shortcut always
+  showed an "Active" badge, even for a guest with no pass. It now appears only
+  when the server has returned an active, unexpired pass for the person signed
+  in. While their passes are loading, or if they fail to load, it stays hidden.
+  The *Emergency SOS* shortcut also lost its "24x7" badge: nothing in the app is
+  staffed around the clock.
+- **"Continue as Guest" quietly sent a ride request.** On the sign-in popup
+  that appears when a guest taps *Request ride*, that button said "Limited
+  Public Browsing", but it actually signed the guest in anonymously and sent the
+  request. The button now reads **Continue as guest and submit demo ride
+  request**. A note above it explains that no driver or vehicle will be
+  dispatched.
+- **A cancelled ride request could still be sent later.** If a guest closed
+  that popup, the request waited in the background and went through the next
+  time they signed in, from a popup that never mentioned it. Closing the popup
+  now cancels it.
+- **The floating Namo AI button covered the *Request ride* button on phones**,
+  and on computers it sat hidden behind the bottom bar. It now appears only on
+  phones, only on Home and Explore, and sits above the bottom bar. Those two
+  screens got extra space at the bottom so it never covers their last item. The
+  Namo AI button in the top bar now also shows on phones (as an icon), so Namo
+  AI is one tap away on every screen.
+- **The top bar did not fit on narrow phones.** At 360px wide the page scrolled
+  sideways and the account button was cut off. On phones the three language
+  buttons are now one dropdown, and the "Simhastha 2027" tag is dropped (the
+  orange strip above already says it). The top bar now fits at 320, 360, 375 and
+  390px in all three languages. "NAMO YATRI" shows in full on one line from
+  360px; at 320px the English title is shortened with "…" rather than pushing
+  the page sideways. Computers look the same as before.
+
+### Changed: removed claims that were not true
+
+- **Place photos showed other places.** Ramkund was a hotel bedroom, and other
+  places showed a South Indian temple tower, a forest and a desert canyon. The
+  project has no photos verified to show these places, so each now shows a
+  plain icon for its type (temple, ghat, and so on) and "No photo yet".
+- **The sign-in popup said SOS needs a verified account.** It does not, and it
+  must not: the server accepts SOS from anyone. The popup now says the SOS
+  screen and its 112 / 108 call buttons work without an account.
+- **The 112 card said "Kumbh Security Cell & Police Control".** The app has no
+  link to any such cell. It now says "National emergency number". The number
+  itself is unchanged.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds.
+- Security suite: **15 of 15 pass**. New scenario: a guest can file an SOS
+  report, so the popup's wording is checked against what the server actually
+  does.
+- Ride request suite: **14 of 14 pass**.
+- In a browser, at 320–390px and 1280px:
+  - **Top bar:** fits with no sideways scrolling, in English, Hindi and Marathi.
+  - **Ride sign-in popup:** shows the new wording, and no ride request was sent.
+  - **Floating AI button:** covers nothing at the end of either screen.
+  - **Namo AI:** opens from the top bar and from the floating button.
+  - **Console:** no errors.
+
+The driver, volunteer, business and admin dashboards were not changed.
+
+---
+
 ## 2026-10-10
 
 The headline: **the app no longer shows anyone a pass that isn't theirs, every

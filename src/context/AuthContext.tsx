@@ -19,6 +19,17 @@ import { doc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { UserProfile, UserRole, VerificationStatus, PrivacySettings } from '../types';
 import { fetchServerIdentity } from '../lib/api';
 
+/**
+ * What "continue as guest" does while a sign-in gate is waiting to resume an
+ * action. Continuing runs that action, so the guest button has to say so.
+ */
+export interface GuestContinuation {
+  /** Guest button label, naming the action that will run. */
+  label: string;
+  /** Shown above the button: what continuing does and does not do. */
+  explanation?: string;
+}
+
 interface AuthContextType {
   firebaseUser: FirebaseUser | null;
   userProfile: UserProfile | null;
@@ -26,9 +37,11 @@ interface AuthContextType {
   isGuest: boolean;
   authModalOpen: boolean;
   authModalReason: string;
+  /** Set while an action waits on the popup; null when it was opened directly. */
+  authModalGuestContinuation: GuestContinuation | null;
   openAuthModal: (reason?: string) => void;
   closeAuthModal: () => void;
-  requireAuth: (actionName: string, onSuccess: () => void) => void;
+  requireAuth: (actionName: string, onSuccess: () => void, guest?: GuestContinuation) => void;
   continueAsGuest: () => void;
   loginWithEmail: (email: string, pass: string) => Promise<void>;
   registerWithEmail: (email: string, pass: string, displayName: string) => Promise<void>;
@@ -52,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState('Sign in to access personalized pilgrimage features');
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [guestContinuation, setGuestContinuation] = useState<GuestContinuation | null>(null);
 
   // Listen to Firebase auth state changes
   useEffect(() => {
@@ -94,16 +108,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthModalOpen(true);
   };
 
+  // Closing also drops any waiting action. Otherwise a request the pilgrim
+  // walked away from would run the next time they sign in or continue as a
+  // guest, from a popup that never mentioned it. The success paths below have
+  // already read pendingAction by the time this state update lands.
   const closeAuthModal = () => {
     setAuthModalOpen(false);
+    setPendingAction(null);
+    setGuestContinuation(null);
   };
 
-  const requireAuth = (actionName: string, onSuccess: () => void) => {
+  const requireAuth = (actionName: string, onSuccess: () => void, guest?: GuestContinuation) => {
     if (firebaseUser && !firebaseUser.isAnonymous) {
       onSuccess();
     } else {
       setPendingAction(() => onSuccess);
-      openAuthModal(`Sign in is required to ${actionName}. Please log in or verify your mobile number.`);
+      setGuestContinuation(guest ?? { label: `Continue as guest and ${actionName}` });
+      openAuthModal(`Sign in to ${actionName}, or continue as a guest.`);
     }
   };
 
@@ -281,6 +302,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isGuest,
         authModalOpen,
         authModalReason,
+        authModalGuestContinuation: guestContinuation,
         openAuthModal,
         closeAuthModal,
         requireAuth,

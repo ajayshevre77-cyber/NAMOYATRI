@@ -24,6 +24,7 @@ import {
 import { SupportedLanguage, translations } from '../i18n';
 import { OfficialAnnouncement, Place } from '../types';
 import { VerificationBadge } from '../components/VerificationBadge';
+import { PlaceImage } from '../components/PlaceImage';
 import { SIMHASTHA_DESTINATION } from '../data/kumbhData';
 import { TouristTab } from '../components/BottomNav';
 
@@ -35,6 +36,8 @@ interface Props {
   onOpenAI: () => void;
   announcements: OfficialAnnouncement[];
   places: Place[];
+  /** Active passes the server returned for the signed-in user; 0 when unknown. */
+  activePassCount: number;
 }
 
 export const HomeScreen: React.FC<Props> = ({
@@ -45,6 +48,7 @@ export const HomeScreen: React.FC<Props> = ({
   onOpenAI,
   announcements,
   places,
+  activePassCount,
 }) => {
   const t = translations[currentLanguage];
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,9 +64,9 @@ export const HomeScreen: React.FC<Props> = ({
   }[] = [
     { id: 'places', label: t.qaExplorePlaces, icon: Compass, tab: 'explore', color: 'bg-orange-50 text-orange-700 border-orange-200' },
     { id: 'transport', label: t.qaFindTransport, icon: Car, tab: 'travel', color: 'bg-amber-50 text-amber-800 border-amber-200' },
-    { id: 'pass', label: t.qaMyPass, icon: QrCode, tab: 'pass', color: 'bg-emerald-50 text-emerald-800 border-emerald-200', badge: 'Active' },
+    { id: 'pass', label: t.qaMyPass, icon: QrCode, tab: 'pass', color: 'bg-emerald-50 text-emerald-800 border-emerald-200', badge: activePassCount > 0 ? 'Active' : undefined },
     { id: 'volunteer', label: t.qaFindVolunteer, icon: HeartHandshake, tab: 'volunteers', color: 'bg-sky-50 text-sky-800 border-sky-200' },
-    { id: 'sos', label: t.qaEmergencySos, icon: AlertTriangle, action: onOpenSOS, color: 'bg-red-50 text-red-700 border-red-200', badge: '24x7' },
+    { id: 'sos', label: t.qaEmergencySos, icon: AlertTriangle, action: onOpenSOS, color: 'bg-red-50 text-red-700 border-red-200' },
     { id: 'family', label: t.qaFamilySafety, icon: Users, tab: 'family', color: 'bg-purple-50 text-purple-800 border-purple-200' },
     { id: 'lost_found', label: t.qaLostFound, icon: SearchX, tab: 'lost_found', color: 'bg-rose-50 text-rose-800 border-rose-200' },
     { id: 'facilities', label: t.qaNearbyFacilities, icon: Building, tab: 'explore', color: 'bg-teal-50 text-teal-800 border-teal-200' },
@@ -301,11 +305,11 @@ export const HomeScreen: React.FC<Props> = ({
               onClick={() => onOpenPlace(place.id)}
               className="bg-white border border-stone-200 rounded-2xl p-3 flex gap-3 cursor-pointer hover:border-orange-300 hover:shadow-sm transition"
             >
-              <img
-                src={place.imageUrl}
+              <PlaceImage
+                place={place}
                 alt={place.name[currentLanguage] || place.name.en}
-                referrerPolicy="no-referrer"
-                className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl object-cover shrink-0 bg-stone-200"
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl shrink-0 bg-stone-200"
+                iconClassName="w-7 h-7"
               />
               <div className="flex-1 min-w-0 flex flex-col justify-between">
                 <div>

@@ -16,8 +16,17 @@ import {
 import { SupportedLanguage, translations } from '../i18n';
 import { MobilityPassProduct, UserPass, PassType } from '../types';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, GuestContinuation } from '../context/AuthContext';
 import { secureFetch } from '../lib/api';
+
+// Continuing as a guest from the sign-in popup creates the pass at once. No
+// payment is taken, so the popup must not read as a purchase.
+const GUEST_DEMO_PASS: GuestContinuation = {
+  label: 'Continue as guest and get demo pass (no payment)',
+  explanation:
+    'Continuing as a guest signs you in anonymously and creates this demo pass straight away. ' +
+    'No payment is taken, and a demo pass is not accepted on any real vehicle.',
+};
 
 interface Props {
   passProducts: MobilityPassProduct[];
@@ -77,7 +86,7 @@ export const PassScreen: React.FC<Props> = ({
   };
 
   const handlePurchase = () => {
-    requireAuth('purchase a digital mobility pass', doPurchase);
+    requireAuth('get a demo pass', doPurchase, GUEST_DEMO_PASS);
   };
 
   const handleConductorScanSimulation = async () => {

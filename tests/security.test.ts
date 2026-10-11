@@ -1,11 +1,12 @@
 import http from 'http';
+import { readFileSync } from 'fs';
 import app from '../server';
 
 process.env.NODE_ENV = 'test';
 
 async function runSecurityTestSuite() {
   console.log('=================================================================');
-  console.log('NAMO YATRI SECURITY HARDENING TEST SUITE (14 SCENARIOS)');
+  console.log('NAMO YATRI SECURITY HARDENING TEST SUITE (17 SCENARIOS)');
   console.log('=================================================================\n');
 
   // Start ephemeral server
@@ -296,6 +297,85 @@ async function runSecurityTestSuite() {
           known.body.userName === undefined &&
           unknown.status === known.status && unknown.body.reason === known.body.reason,
         details: `Known ref: ${known.status} ${known.body.code}; unknown ref: ${unknown.status} ${unknown.body.code}`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 15: SOS needs no account. The sign-in popup tells pilgrims so;
+    // if this ever changes, that copy must change with it.
+    // -------------------------------------------------------------
+    await assertTest(15, 'Guest without a token can file an SOS report (200)', async () => {
+      const res = await fetch(`${baseUrl}/api/safety/emergency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'sos_panic' }),
+      });
+      const body: any = await res.json();
+      return {
+        success:
+          res.status === 200 && body.success === true &&
+          body.emergencyCase?.userId === 'GUEST_EMERGENCY_REPORTER',
+        details: `Status: ${res.status}, reporter: ${body.emergencyCase?.userId}`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 16: The SOS API never claims emergency dispatch. No DEOC, police
+    // or ambulance integration exists, so a report is only recorded.
+    // Checks a new report and the seeded sample case.
+    // -------------------------------------------------------------
+    await assertTest(16, 'SOS API responses record a demo report and never claim dispatch', async () => {
+      const DISPATCH_CLAIMS = /dispatched_to_deoc|deoc|queued to|logged to|forwarded to|field_unit|help is on the way/i;
+      const NOT_NOTIFIED = 'Emergency services have NOT been notified';
+
+      const res = await fetch(`${baseUrl}/api/safety/emergency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'medical', description: 'test report' }),
+      });
+      const body: any = await res.json();
+      const created = body.emergencyCase ?? {};
+
+      const listRes = await fetch(`${baseUrl}/api/safety/emergency-cases`, {
+        headers: { Authorization: 'Bearer TEST_TOKEN_VALID:ops_reviewer:OPERATIONS:VERIFIED' },
+      });
+      const cases: any[] = ((await listRes.json()) as any).cases ?? [];
+
+      const honest = (c: any) =>
+        c.status === 'recorded' && c.dispatchStatus === 'DEMO_NOT_DISPATCHED' &&
+        typeof c.notice === 'string' && c.notice.includes(NOT_NOTIFIED) &&
+        !DISPATCH_CLAIMS.test(JSON.stringify(c));
+
+      const claimInResponse = JSON.stringify(body).match(DISPATCH_CLAIMS);
+      return {
+        success:
+          res.status === 200 && honest(created) &&
+          typeof body.notice === 'string' && body.notice.includes(NOT_NOTIFIED) && !claimInResponse &&
+          listRes.status === 200 && cases.length >= 2 && cases.every(honest),
+        details:
+          `Status: ${res.status}, record status: ${created.status}, dispatch: ${created.dispatchStatus}; ` +
+          `cases checked: ${cases.length}${claimInResponse ? `; claim found: "${claimInResponse[0]}"` : ''}`,
+      };
+    });
+
+    // -------------------------------------------------------------
+    // Test 17: The SOS screen's own wording. There is no UI test runner, so
+    // this reads the component source: phrases that claim dispatch must be
+    // absent, and the "not notified" statement present. It checks text, not
+    // rendering.
+    // -------------------------------------------------------------
+    await assertTest(17, 'SOS screen text says emergency services were NOT notified and claims no dispatch', async () => {
+      const source = readFileSync(new URL('../src/views/SafetySOSScreen.tsx', import.meta.url), 'utf8');
+      const banned = [
+        /DEOC queue/i, /logged to/i, /queued to/i, /forwarded to/i, /dispatched to/i,
+        /help is on the way/i, /Ticket Generated/i, /HIGH-PRIORITY ASSISTANCE/i,
+        /Trauma Medical Base/i, /deocIntegrationNotice/,
+      ];
+      const found = banned.filter((re) => re.test(source)).map(String);
+      const notNotified = source.split('Emergency services have NOT been notified').length - 1;
+      return {
+        success: found.length === 0 && notNotified >= 2,
+        details: found.length ? `Banned phrases present: ${found.join(', ')}` : `"NOT been notified" appears ${notNotified} times`,
       };
     });
 

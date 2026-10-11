@@ -39,7 +39,7 @@ export const BottomNav: React.FC<Props> = ({
   onSelectTab,
   onTabChange,
   currentLanguage,
-  activePassCount = 1,
+  activePassCount = 0,
 }) => {
   const t = translations[currentLanguage];
 

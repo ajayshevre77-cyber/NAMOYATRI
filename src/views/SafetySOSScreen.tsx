@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   AlertTriangle, 
   PhoneCall, 
@@ -16,11 +16,25 @@ import { SupportedLanguage, translations } from '../i18n';
 import { EmergencyCase } from '../types';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
 import { secureFetch } from '../lib/api';
+import { createSosHold, SosHold, SosHoldInput, SosHoldState, SOS_HOLD_MS } from '../lib/sosHold';
+
+const HOLD_SECONDS = SOS_HOLD_MS / 1000;
+const SOS_RECORDED_ANNOUNCEMENT =
+  'Demo report recorded. Emergency services have NOT been notified, and no one is on the way. If you need help, call 112 or 108.';
 
 interface Props {
   currentLanguage: SupportedLanguage;
   onOpenLostAndFound: () => void;
 }
+
+// The API accepts a fixed set of report types; each form category maps to one.
+// Sending the category value itself was rejected for three of the four.
+const INCIDENT_API_TYPES: Record<string, string> = {
+  safety_report: 'stampede_risk',
+  medical: 'medical',
+  police: 'general',
+  other: 'general',
+};
 
 export const SafetySOSScreen: React.FC<Props> = ({
   currentLanguage,
@@ -28,11 +42,18 @@ export const SafetySOSScreen: React.FC<Props> = ({
 }) => {
   const t = translations[currentLanguage];
 
-  // 3-second hold state for SOS
-  const [holding, setHolding] = useState(false);
-  const [holdProgress, setHoldProgress] = useState(0);
-  const [isSubmittingSOS, setIsSubmittingSOS] = useState(false);
+  // SOS press-and-hold. The logic lives in lib/sosHold; this screen forwards
+  // events to it and renders its state.
+  const [hold, setHold] = useState<SosHoldState>({
+    holding: false,
+    progress: 0,
+    secondsLeft: HOLD_SECONDS,
+    submitting: false,
+  });
+  // What the screen-reader live region says when no hold is in progress.
+  const [sosAnnouncement, setSosAnnouncement] = useState('');
   const [activeSOSTicket, setActiveSOSTicket] = useState<EmergencyCase | null>(null);
+  const [sosError, setSosError] = useState(false);
 
   // Safety Incident Report form modal
   const [showReportForm, setShowReportForm] = useState(false);
@@ -40,72 +61,98 @@ export const SafetySOSScreen: React.FC<Props> = ({
   const [incidentDescription, setIncidentDescription] = useState('');
   const [incidentLocation, setIncidentLocation] = useState('Panchavati Ramkund Ghat Sector');
   const [reportSuccess, setReportSuccess] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let interval: any;
-    if (holding) {
-      interval = setInterval(() => {
-        setHoldProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            triggerSOS();
-            return 100;
-          }
-          return prev + 5; // ~2 seconds total for responsive feel
-        });
-      }, 100);
-    } else {
-      setHoldProgress(0);
-    }
-    return () => clearInterval(interval);
-  }, [holding]);
-
-  const triggerSOS = async () => {
-    setIsSubmittingSOS(true);
-    setHolding(false);
+  // Records one demo report. Only the hold logic calls this, once per
+  // completed hold, and never while a previous report is still being recorded.
+  const recordDemoSOS = async () => {
+    setSosError(false);
+    setActiveSOSTicket(null);
     try {
+      // The app does not read the phone's location, so it sends none rather
+      // than a made-up place a pilgrim might think responders were given.
       const res = await secureFetch('/api/safety/emergency', {
         method: 'POST',
         body: JSON.stringify({
           type: 'sos_panic',
           description: 'Emergency SOS button triggered from pilgrim mobile application.',
-          locationZone: 'Panchavati / Ramkund Ghat Sector (Cell Tower Approximate)',
+          locationZone: 'Location not shared (demo)',
           reporterName: 'Pilgrim Anonymous/Emergency Trigger',
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         setActiveSOSTicket(data.emergencyCase);
+        setSosAnnouncement(SOS_RECORDED_ANNOUNCEMENT);
+      } else {
+        setSosError(true);
+        setSosAnnouncement(''); // the error alert below announces itself
       }
     } catch (err) {
-      console.error('SOS dispatch error', err);
-    } finally {
-      setIsSubmittingSOS(false);
+      console.error('Demo SOS report failed', err);
+      setSosError(true);
+      setSosAnnouncement('');
     }
   };
 
+  // Created once. Its callbacks only use state setters and recordDemoSOS,
+  // whose dependencies never change, so the first render's versions are fine.
+  const holdRef = useRef<SosHold | null>(null);
+  if (holdRef.current === null) {
+    holdRef.current = createSosHold({
+      submit: recordDemoSOS,
+      onChange: setHold,
+      onEnd: (outcome) =>
+        setSosAnnouncement(
+          outcome === 'cancelled'
+            ? `Released before ${HOLD_SECONDS} seconds. No report was recorded.`
+            : 'Recording demo SOS report.',
+        ),
+    });
+  }
+  useEffect(() => () => holdRef.current?.dispose(), []);
+
+  // Forwards one button event; suppresses the browser default when asked to,
+  // so a keyboard hold does not also fire a click.
+  const feedHold = (input: SosHoldInput, event?: { preventDefault: () => void }) => {
+    if (holdRef.current?.handle(input)) event?.preventDefault();
+  };
+
+  // The live region speaks once per second while holding, not on every tick.
+  const holdLiveText = hold.holding
+    ? `Keep holding: ${hold.secondsLeft} second${hold.secondsLeft === 1 ? '' : 's'} left. Release to cancel.`
+    : sosAnnouncement;
+
   const handleIncidentReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setReportError(null);
     try {
       const res = await secureFetch('/api/safety/emergency', {
         method: 'POST',
         body: JSON.stringify({
-          type: incidentType,
+          type: INCIDENT_API_TYPES[incidentType] ?? 'general',
           description: incidentDescription,
           locationZone: incidentLocation,
         }),
       });
-      const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         setReportSuccess(true);
         setTimeout(() => {
           setReportSuccess(false);
           setShowReportForm(false);
           setIncidentDescription('');
         }, 2000);
+      } else {
+        setReportError(
+          typeof data?.error === 'string' && data.error
+            ? data.error
+            : 'The demo report could not be recorded. Please try again.',
+        );
       }
     } catch (err) {
       console.error(err);
+      setReportError('Could not reach the server. Check your connection and try again.');
     }
   };
 
@@ -117,7 +164,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
           Emergency Services & Pilgrim Safety
         </h2>
         <p className="text-xs sm:text-sm text-stone-500">
-          Instant SOS ticket logging, rapid hotline access, and medical camp coordination.
+          For real help, call 112 or 108. The SOS button and incident report on this screen are demos that alert no one.
         </p>
       </div>
 
@@ -132,20 +179,20 @@ export const SafetySOSScreen: React.FC<Props> = ({
       <div className="p-6 bg-gradient-to-b from-red-900 via-stone-900 to-black rounded-3xl text-center space-y-4 border-2 border-red-700/50 shadow-2xl">
         <div>
           <span className="text-[10px] uppercase font-bold tracking-widest px-2.5 py-0.5 rounded-full bg-red-600/30 text-red-300 border border-red-500/30 inline-block">
-            HIGH-PRIORITY ASSISTANCE
+            Demo · alerts no one
           </span>
           <h3 className="text-lg font-black text-white mt-1">
             Pilgrim Emergency Panic SOS
           </h3>
-          <p className="text-xs text-stone-300 max-w-sm mx-auto mt-0.5">
-            Press and hold for 3 seconds to record a demo SOS ticket. No one is alerted. Call 112 or 108 for real help.
+          <p id="sos-hold-instructions" className="text-xs text-stone-300 max-w-sm mx-auto mt-0.5">
+            Press and hold for {HOLD_SECONDS} seconds, or hold Enter or Space, to record a demo SOS report. Letting go sooner cancels it. No one is alerted. Call 112 or 108 for real help.
           </p>
         </div>
 
         {/* The 3-second hold circular button */}
         <div className="flex flex-col items-center justify-center py-2">
           <div className="relative">
-            <svg className="w-36 h-36 -rotate-90">
+            <svg className="w-36 h-36 -rotate-90" aria-hidden="true">
               <circle
                 cx="72"
                 cy="72"
@@ -162,54 +209,85 @@ export const SafetySOSScreen: React.FC<Props> = ({
                 className="text-red-500 transition-all duration-75"
                 strokeWidth="8"
                 strokeDasharray={402}
-                strokeDashoffset={402 - (402 * holdProgress) / 100}
+                strokeDashoffset={402 - 402 * hold.progress}
                 strokeLinecap="round"
                 stroke="currentColor"
                 fill="transparent"
               />
             </svg>
 
+            {/* Pointer events cover mouse, touch and pen. touch-none keeps the
+                browser from turning a held finger into a scroll, which would
+                cancel the hold. No onClick: the hold logic does the submitting,
+                and a click must never add a second report. The button stays
+                focusable while a report is recorded (aria-disabled, not
+                disabled), so keyboard focus is not lost. */}
             <button
               id="sos-hold-trigger-btn"
               type="button"
-              onMouseDown={() => setHolding(true)}
-              onMouseUp={() => setHolding(false)}
-              onTouchStart={() => setHolding(true)}
-              onTouchEnd={() => setHolding(false)}
-              disabled={isSubmittingSOS}
-              className={`absolute inset-3 rounded-full bg-gradient-to-br from-red-600 to-red-800 text-white font-black text-xs sm:text-sm flex flex-col items-center justify-center shadow-lg active:scale-95 transition-all select-none cursor-pointer ${
-                holding ? 'ring-4 ring-red-400/50' : ''
-              }`}
+              aria-describedby="sos-hold-instructions"
+              aria-disabled={hold.submitting || undefined}
+              onPointerDown={(e) => feedHold({ type: 'pointerdown', pointerType: e.pointerType, button: e.button })}
+              onPointerUp={() => feedHold({ type: 'pointerup' })}
+              onPointerLeave={() => feedHold({ type: 'pointerleave' })}
+              onPointerCancel={() => feedHold({ type: 'pointercancel' })}
+              onBlur={() => feedHold({ type: 'blur' })}
+              onKeyDown={(e) => feedHold({ type: 'keydown', key: e.key, repeat: e.repeat }, e)}
+              onKeyUp={(e) => feedHold({ type: 'keyup', key: e.key }, e)}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{ WebkitTouchCallout: 'none' }}
+              className={`absolute inset-3 rounded-full bg-gradient-to-br from-red-600 to-red-800 text-white font-black text-xs sm:text-sm flex flex-col items-center justify-center shadow-lg active:scale-95 transition-all select-none touch-none cursor-pointer focus:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 ${
+                hold.holding ? 'ring-4 ring-red-400/50' : ''
+              } ${hold.submitting ? 'opacity-60 cursor-wait' : ''}`}
             >
-              <AlertTriangle className="w-8 h-8 mb-1 animate-pulse" />
-              <span>{holding ? `HOLDING (${Math.round(holdProgress)}%)` : 'HOLD SOS'}</span>
-              <span className="text-[9px] font-medium opacity-80">3 SECONDS</span>
+              {hold.submitting ? (
+                <Loader2 className="w-8 h-8 mb-1 animate-spin" aria-hidden="true" />
+              ) : (
+                <AlertTriangle className="w-8 h-8 mb-1 animate-pulse" aria-hidden="true" />
+              )}
+              <span>
+                {hold.submitting ? 'RECORDING…' : hold.holding ? `KEEP HOLDING · ${hold.secondsLeft}s` : 'HOLD SOS'}
+              </span>
+              <span className="text-[9px] font-medium opacity-80">{HOLD_SECONDS} SECONDS</span>
             </button>
           </div>
         </div>
 
-        {/* SOS Ticket Active Confirmation Banner */}
+        {/* Screen-reader updates: time left while holding, a cancelled hold,
+            then the result. Always rendered, so changes are announced. */}
+        <p id="sos-hold-status" role="status" aria-live="polite" className="sr-only">
+          {holdLiveText}
+        </p>
+
+        {/* Demo SOS result. Recording a report is not dispatching help: the
+            server stores it and nothing else happens, so this must never read
+            as an alert that went out. The wording is fixed here rather than
+            taken from the server. Screen readers hear it from the status
+            region above, so this card is not a live region itself. */}
         {activeSOSTicket && (
-          <div 
+          <div
             id="active-sos-ticket-alert"
-            className="p-3.5 bg-red-950/90 border border-red-500 rounded-2xl text-left text-xs space-y-1 text-white animate-in zoom-in-95"
+            className="p-3.5 bg-red-950/90 border border-red-500 rounded-2xl text-left text-xs space-y-1.5 text-white animate-in zoom-in-95"
           >
-            <div className="flex items-center justify-between font-bold text-red-200">
+            <div className="flex items-center justify-between gap-2 font-bold text-red-200">
               <span className="flex items-center gap-1.5">
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span>Ticket Generated: {activeSOSTicket.ticketNumber}</span>
+                <Info className="w-4 h-4 text-amber-300 shrink-0" aria-hidden="true" />
+                <span>Demo report recorded · {activeSOSTicket.ticketNumber}</span>
               </span>
-              {/* The server's status is a simulation label; nothing was dispatched. */}
-              <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-red-700 text-white rounded">
+              <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-red-700 text-white rounded shrink-0">
                 Demo · not sent
               </span>
             </div>
-            <p className="text-stone-300 text-[11px] leading-relaxed">
-              {activeSOSTicket.deocIntegrationNotice}
+            <p className="text-white text-xs font-semibold leading-relaxed">
+              Emergency services have NOT been notified, and no one is on the way.
             </p>
-            <div className="flex items-center justify-between text-[10px] text-stone-400 pt-1 border-t border-red-800">
-              <span>Location: {activeSOSTicket.locationZone}</span>
-              <button 
+            <p className="text-stone-300 text-[11px] leading-relaxed">
+              This button only records a demo report on the app's server. If you need help, call{' '}
+              <a href="tel:112" className="font-bold text-white underline">112</a> or{' '}
+              <a href="tel:108" className="font-bold text-white underline">108</a> now.
+            </p>
+            <div className="flex justify-end text-[10px] pt-1 border-t border-red-800">
+              <button
                 onClick={() => setActiveSOSTicket(null)}
                 className="underline text-red-300 font-bold"
               >
@@ -218,12 +296,24 @@ export const SafetySOSScreen: React.FC<Props> = ({
             </div>
           </div>
         )}
+
+        {sosError && (
+          <p
+            id="sos-error-alert"
+            role="alert"
+            className="p-3 bg-red-950/90 border border-red-500 rounded-2xl text-left text-xs text-white leading-relaxed"
+          >
+            The demo SOS could not be recorded. It would not have alerted anyone anyway: if you need help, call{' '}
+            <a href="tel:112" className="font-bold underline">112</a> or{' '}
+            <a href="tel:108" className="font-bold underline">108</a> now.
+          </p>
+        )}
       </div>
 
       {/* Direct Emergency Hotlines (Click to Call) */}
       <div className="space-y-2.5">
         <h3 className="text-sm font-bold uppercase tracking-wider text-stone-800">
-          Official Emergency Hotlines
+          Emergency Numbers
         </h3>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -242,7 +332,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
                   {t.medicalEmergency}
                 </h4>
                 <p className="text-[11px] text-stone-500">
-                  Ambulance & Trauma Medical Base
+                  Emergency ambulance number
                 </p>
               </div>
             </div>
@@ -267,7 +357,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
                   {t.policeHelp}
                 </h4>
                 <p className="text-[11px] text-stone-500">
-                  Kumbh Security Cell & Police Control
+                  National emergency number
                 </p>
               </div>
             </div>
@@ -331,7 +421,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
       <div className="pt-1">
         <button
           id="report-safety-incident-btn"
-          onClick={() => setShowReportForm(true)}
+          onClick={() => { setReportError(null); setShowReportForm(true); }}
           className="w-full py-3 px-4 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs sm:text-sm rounded-2xl transition flex items-center justify-center gap-2 shadow-xs"
         >
           <FileText className="w-4 h-4 text-orange-400" />
@@ -356,15 +446,23 @@ export const SafetySOSScreen: React.FC<Props> = ({
             </div>
 
             {reportSuccess ? (
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-950 text-xs text-center space-y-1">
-                <Check className="w-6 h-6 text-emerald-600 mx-auto" />
-                <p className="font-bold text-sm">Incident Report Registered</p>
-                <p className="text-[11px] text-emerald-800">
-                  Forwarded to Sector Safety Marshal & Municipal Health cell.
+              <div
+                id="incident-report-result"
+                role="status"
+                className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-950 text-xs text-center space-y-1"
+              >
+                <Check className="w-6 h-6 text-amber-600 mx-auto" aria-hidden="true" />
+                <p className="font-bold text-sm">Demo report recorded</p>
+                <p className="text-[11px] text-amber-900">
+                  Emergency services have NOT been notified. It was not sent to police, marshals or any health team. For urgent help, call 112 or 108.
                 </p>
               </div>
             ) : (
               <form onSubmit={handleIncidentReportSubmit} className="space-y-3 text-xs">
+                <p className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                  Demo only: the report is stored on the demo server and sent to no one. For urgent help, call 112 or 108.
+                </p>
+
                 <div>
                   <label className="font-bold text-stone-700 block mb-1">Incident Category</label>
                   <select
@@ -402,6 +500,12 @@ export const SafetySOSScreen: React.FC<Props> = ({
                   />
                 </div>
 
+                {reportError && (
+                  <p role="alert" className="p-2.5 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-800">
+                    {reportError}
+                  </p>
+                )}
+
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
@@ -414,7 +518,7 @@ export const SafetySOSScreen: React.FC<Props> = ({
                     type="submit"
                     className="flex-1 py-2 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl"
                   >
-                    Submit Report
+                    Submit Demo Report
                   </button>
                 </div>
               </form>

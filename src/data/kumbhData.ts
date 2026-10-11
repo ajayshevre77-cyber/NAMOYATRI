@@ -57,7 +57,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 28.4,
-    imageUrl: 'https://images.unsplash.com/photo-1590077428593-a55bb07c4665?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'high',
   },
   {
@@ -90,7 +89,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 1.2,
-    imageUrl: 'https://images.unsplash.com/photo-1609766857041-ed402ea8069a?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'peak',
   },
   {
@@ -123,7 +121,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 28.1,
-    imageUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'high',
   },
   {
@@ -156,7 +153,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 1.8,
-    imageUrl: 'https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'moderate',
   },
   {
@@ -184,7 +180,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 3.6,
-    imageUrl: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'moderate',
   },
   {
@@ -212,7 +207,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 2.8,
-    imageUrl: 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'high',
   },
   {
@@ -240,7 +234,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 0.9,
-    imageUrl: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'low',
   },
   {
@@ -268,7 +261,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: true,
     distanceKmPlaceholder: 7.5,
-    imageUrl: 'https://images.unsplash.com/photo-1506521781263-d8422e82f27a?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'moderate',
   },
   {
@@ -296,7 +288,6 @@ export const MOCK_PLACES: Place[] = [
     verificationTier: 'unverified',
     isOfficialKumbhSite: false,
     distanceKmPlaceholder: 8.9,
-    imageUrl: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80',
     crowdLevel: 'moderate',
   },
 ];

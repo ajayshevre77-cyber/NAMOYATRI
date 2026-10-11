@@ -84,41 +84,62 @@ export const Header: React.FC<Props> = ({
 
       {/* Main Nav Bar */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
-        {/* Brand & Tagline */}
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white shadow-sm shadow-orange-950/40">
+        {/* Brand & Tagline. On phones this side gives way: the title stays on
+            one line, the tagline truncates, and the year chip is dropped
+            because the banner above already shows it. */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white shadow-sm shadow-orange-950/40">
             <span className="font-serif font-black text-lg tracking-tighter">NY</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="font-serif font-black text-base sm:text-lg tracking-wide text-stone-100">
+              <h1 className="font-serif font-black text-base sm:text-lg tracking-wide text-stone-100 truncate">
                 {t.brandName}
               </h1>
-              <span className="text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-stone-800 text-orange-400 border border-stone-700">
+              <span className="hidden sm:inline text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded bg-stone-800 text-orange-400 border border-stone-700 whitespace-nowrap">
                 Simhastha 2027
               </span>
             </div>
-            <p className="text-[11px] sm:text-xs text-stone-400 leading-none">
+            <p className="text-[11px] sm:text-xs text-stone-400 leading-none truncate">
               {t.tagline}
             </p>
           </div>
         </div>
 
         {/* Action Controls: Language, Role Switcher, Account */}
-        <div className="flex items-center gap-2 sm:gap-2.5">
-          {/* Namo AI trigger */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* Namo AI trigger, the app's AI entry point at every screen size.
+              On phones it is an icon in a 40x44px target; the tighter gap
+              above pays for the extra width so the title still fits at 360px. */}
           <button
             id="header-namo-ai-btn"
             onClick={onOpenAI}
-            className="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold text-xs sm:text-sm px-2.5 sm:px-3 py-1.5 rounded-lg shadow-sm hover:from-amber-600 hover:to-orange-700 transition"
+            className="flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold text-xs sm:text-sm max-sm:w-10 max-sm:h-11 sm:px-3 sm:py-1.5 rounded-lg shadow-sm hover:from-amber-600 hover:to-orange-700 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
             title="Ask Namo AI Pilgrim Assistant"
+            aria-label="Ask Namo AI"
           >
-            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-200" />
+            <Sparkles className="w-4 h-4 text-amber-200" aria-hidden="true" />
             <span className="hidden sm:inline">Namo AI</span>
           </button>
 
-          {/* Language Selector */}
-          <div className="relative flex items-center bg-stone-800 rounded-lg p-0.5 border border-stone-700">
+          {/* Language Selector. Phones get one compact dropdown: the three
+              buttons are too wide to sit beside the title at 360px. */}
+          <label className="sm:hidden">
+            <span className="sr-only">Language</span>
+            <select
+              id="lang-select-mobile"
+              value={currentLanguage}
+              onChange={(e) => onLanguageChange(e.target.value as SupportedLanguage)}
+              className="bg-stone-800 text-stone-100 text-xs font-semibold rounded-lg border border-stone-700 pl-2 pr-1 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-500"
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang.code} value={lang.code} className="bg-stone-900 text-stone-200">
+                  {lang.nativeLabel}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="relative hidden sm:flex items-center bg-stone-800 rounded-lg p-0.5 border border-stone-700">
             {LANGUAGES.map((lang) => (
               <button
                 key={lang.code}
@@ -159,17 +180,24 @@ export const Header: React.FC<Props> = ({
             const isDevEnv = import.meta.env.DEV;
 
             if (authorizedRoles.length > 1) {
-              // User has verified multiple authorizations
+              // User has verified multiple authorizations. On phones the
+              // role names (up to ~190px) pushed the header past 360px, so
+              // there the box shrinks to the shield icon with the same
+              // native <select> laid invisibly over it: tapping the icon
+              // opens the usual role list.
               return (
                 <div className="relative group">
                   <label htmlFor="role-select" className="sr-only">Switch Authorized View</label>
-                  <div className="flex items-center gap-1 bg-stone-800 rounded-lg px-2 py-1 border border-amber-600/50">
-                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <div
+                    className="relative flex items-center gap-1 bg-stone-800 rounded-lg px-2 py-1 max-sm:py-1.5 border border-amber-600/50 focus-within:ring-2 focus-within:ring-orange-500"
+                    title="Switch view"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
                     <select
                       id="role-select"
                       value={currentRole}
                       onChange={(e) => onRoleChange(e.target.value as UserRole)}
-                      className="bg-transparent text-amber-200 text-xs font-semibold focus:outline-none cursor-pointer"
+                      className="bg-transparent text-amber-200 text-xs font-semibold focus:outline-none cursor-pointer max-sm:absolute max-sm:inset-0 max-sm:w-full max-sm:opacity-0"
                     >
                       {roleOptions
                         .filter(opt => authorizedRoles.includes(opt.role))

@@ -3,12 +3,21 @@ import { Info, MapPin, X } from 'lucide-react';
 import { TransportOption, RideBooking } from '../types';
 import { PICKUP_POINTS, DROP_POINTS } from '../data/kumbhData';
 import { RideBookingCard, RideRequestDetails } from './RideBookingCard';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, GuestContinuation } from '../context/AuthContext';
 import { secureFetch } from '../lib/api';
 
 interface Props {
   transportOptions: TransportOption[];
 }
+
+// Continuing as a guest from the sign-in popup submits the request at once,
+// so the popup has to say that, and that nothing will be dispatched.
+const GUEST_RIDE_REQUEST: GuestContinuation = {
+  label: 'Continue as guest and submit demo ride request',
+  explanation:
+    'Continuing as a guest signs you in anonymously and submits this ride request straight away. ' +
+    'It is a demo request, only stored on the demo server: no driver or vehicle will be dispatched, and none will arrive.',
+};
 
 /** Turns a failed response into something a pilgrim can act on. */
 function describeFailure(status: number, body: any): string {
@@ -66,7 +75,7 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions }) => {
 
   // Guests get the sign-in popup first, then the request resumes on its own.
   const handleSubmit = (details: RideRequestDetails) =>
-    requireAuth('request a ride', () => requestRide(details));
+    requireAuth('request a ride', () => requestRide(details), GUEST_RIDE_REQUEST);
 
   if (!booking) {
     return (
