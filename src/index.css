@@ -1,6 +1,26 @@
 @import "tailwindcss";
 
 /* ===========================================================================
+   Fonts (loaded from Google Fonts in index.html)
+
+   Body text is Hind and headings (every `font-serif` element) are Yatra One.
+   Both cover English and Devanagari, so Hindi and Marathi match the English.
+   If Google Fonts can't be reached, the device's own fonts are used.
+   =========================================================================== */
+
+@theme {
+  --font-sans: "Hind", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: "Yatra One", ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+/* Yatra One has only one weight. Headings still carry font-bold/font-black,
+   so stop the browser from faking a heavier version: it smears the brush
+   strokes. */
+.font-serif {
+  font-synthesis: none;
+}
+
+/* ===========================================================================
    Entrance animations
 
    The screens use `animate-in fade-in zoom-in-95` on modals and result cards.
@@ -85,4 +105,19 @@
   .animate-in {
     animation: none;
   }
+}
+
+/* ===========================================================================
+   Map screen (Leaflet)
+
+   Leaflet's zoom buttons are 30px; the app's touch targets are 48px. Scoped
+   to the map screen so nothing else is affected.
+   =========================================================================== */
+
+#map-screen-view .leaflet-bar a,
+#map-screen-view .leaflet-touch .leaflet-bar a {
+  width: 48px;
+  height: 48px;
+  line-height: 48px;
+  font-size: 22px;
 }

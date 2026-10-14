@@ -32,7 +32,7 @@ const formatDeparture = (departAt: string | null) =>
     : 'Leave now';
 
 /**
- * The one ride request flow, used by the Travel tab and the `?screen=ride` page.
+ * The one ride request flow, used by the Travel tab.
  *
  * Owns the sign-in gate, the API call and the result. The result is shown as a
  * recorded demo request, never as a confirmed or dispatched ride, because the

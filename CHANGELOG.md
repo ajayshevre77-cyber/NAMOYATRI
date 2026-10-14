@@ -4,6 +4,269 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-14 (Phase 2B: road routes on the map)
+
+### What's new
+
+- **Plan a route** on the Map tab. Pick a start (your location, or any place
+  from search, the map or the nearby list), a destination, and up to 8 stops
+  in between. Move stops up or down, remove them, or reverse the whole route.
+  Stops stay in the order you set; nothing reorders them.
+- **Walk or Drive.** Tap "Get route" and the road route is drawn on the map
+  (dotted for walking, solid for driving), with the total road distance, the
+  estimated travel time, and the distance and time for each part.
+- Switching Walk/Drive on a route that is showing redraws it straight away.
+  Changing the stops hides the old route until you tap "Update route", so an
+  old line is never shown for new stops.
+- **Directions in Google Maps** opens the same stops in Google Maps for
+  turn-by-turn navigation. It works even when Namo Yatri's own routing is
+  not set up.
+
+### Where the routes come from
+
+- Routes and times come from **OpenRouteService** (run by HeiGIT in
+  Heidelberg), using OpenStreetMap roads. The app uses the new
+  `api.heigit.org` address; the old address is being shut down in November.
+- It needs a free key, kept on the server only. **No key is set on this
+  machine yet**, so the planner says "Road routes are not set up on this
+  server yet" and shows no distances or times. Nothing is ever made up.
+- Times assume a steady pace or ordinary traffic. The app says plainly that
+  Kumbh police traffic plans, closed roads and crowds can change both the
+  route and the time. Routes to Kumbh sample sites are marked approximate,
+  because those sites' locations are.
+- To calculate a route, the stops are sent to OpenRouteService. Your own
+  location is rounded to about 10 m first. Your exact position never leaves
+  the phone.
+
+### When something goes wrong
+
+- Clear messages for: no route between the stops, a stop too far from any
+  road, the routing service being busy, slow or unreachable, the daily
+  allowance being used up, and routing not being set up. "Try again" appears
+  only where trying again can help, and you can cancel a slow request.
+- The same route asked twice is calculated once (on the server for 6 hours,
+  and on the phone for the visit), and the server spaces its requests to
+  stay inside the free plan's 40 a minute.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. Security **17/17**,
+  rides **14/14**, SOS hold **9/9**, map **16/16**, and the new routing tests
+  **16/16**. The routing tests never call the real service.
+- Four deliberate bugs were added one at a time (line drawn with latitude and
+  longitude swapped, coordinates sent swapped, the missing-key check removed,
+  stops reordered). The tests caught every one.
+- In the browser: with no key, the "not set up" state and the Google Maps
+  link. Then, against a **stand-in routing service on this computer** (made-up
+  route shapes, not real roads): drawing, totals and each leg, Walk/Drive,
+  adding, moving and removing stops, "Update route", errors and "Try again",
+  Cancel, starting from your location, and phone widths of 320, 360 and
+  390 px with no sideways scrolling.
+- **Not yet checked with real OpenRouteService routes**, because no key is
+  available here. That needs a key in `.env` and one more browser check.
+
+---
+
+## 2026-10-14 (new fonts, and pinch-to-zoom works again)
+
+### New fonts
+
+- **Body text is now Hind** and **headings are now Yatra One**: the NAMO YATRI
+  title, every screen heading and the big greeting on Home. Both fonts were
+  designed for English and Devanagari together, so Hindi and Marathi now match
+  the English instead of falling back to whatever the phone has.
+- Until now the app had no fonts of its own. It asked Google for three fonts
+  but never used them, so every device showed its own default.
+- Yatra One comes in only one weight, so headings show it as drawn rather than
+  with a fake bold added by the browser.
+- If Google's font service can't be reached, the phone's own fonts are used
+  and everything still works.
+
+### Pinch-to-zoom
+
+- Pilgrims can now pinch to zoom the app. It was blocked before, which made
+  small text hard for older pilgrims to read.
+- On iPhones, tapping a form field with small text may now zoom the page in a
+  little. Pinch out to return. Making those fields 16 px would stop it.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. Security **17/17**,
+  rides **14/14**, SOS hold **9/9**, map **16/16**.
+- In the browser, both fonts load and apply. The top bar still fits at 320,
+  360 and 390 px in English, Hindi and Marathi; as before, only the English
+  title is shortened, at 320 px. Hindi letters in the top bar are not clipped.
+- Every screen was then checked by hand, as listed in the entry below.
+
+### Full check of every screen (2026-10-14)
+
+All pilgrim screens open from the bottom bar and from the Home tiles, in all
+three languages, at 320 px and 1280 px, with no sideways scrolling and no
+errors:
+
+- **Home**: all 11 tiles open the right screen.
+- **Explore**: filters, search and its empty state; the place window opens,
+  saves and closes.
+- **Map**: map tiles, "Near Ramkund" (174 real places), filters, place details
+  and search all work.
+- **Travel**: validation, prices that change with route and ride type,
+  passengers and scheduling. "Request ride" asks you to sign in, and closing
+  that window sends nothing.
+- **Pass**: no pass is shown for a guest, and "Get demo pass" asks you to sign
+  in.
+- **SOS**: letting go early cancels. A full hold records one demo report after
+  3.0 seconds and says plainly that emergency services were NOT notified.
+- **Volunteers, Family Safety, Lost & Found, Account, Namo AI**: all open and
+  respond. Namo AI says its answers are built in, because no AI key is set.
+- **Partner and staff dashboards**: Driver, Volunteer, Business and Admin, as
+  previews in development mode. All open, fit a 360 px phone, and their
+  buttons respond.
+
+Problems found during the check and **not fixed yet**:
+
+1. **Volunteers:** a guest who taps "Send request (demo)" gets no response.
+   The server rejects it because the guest isn't signed in, and the screen
+   says nothing.
+2. **Family Safety:** the "Call" buttons dial made-up mobile numbers such as
+   +91 98220 11111. Those may belong to real people.
+3. **Lost & Found:** two more made-up numbers, and a "Police Chowki" call
+   button whose number can't be dialled as written and hasn't been checked.
+4. **Screen readers:** the Save, Share and Close buttons in the place window
+   (on phones), and the Close button on the sign-in window, have no name.
+5. **Keyboard:** the place window doesn't close with Esc, and the "Lost Person
+   & Lost Item Desk" card on the SOS screen can't be reached with Tab.
+6. **Namo AI:** one suggested question still says "24x7 medical camp".
+
+---
+
+## 2026-10-14 (ride booking page merged into the Travel tab)
+
+The separate ride booking page from the sketch (opened with `?screen=ride`) is
+now part of the main app's **Travel** tab.
+
+### Why
+
+That page had become cut off from the rest of the app:
+
+- Nothing in the app linked to it. You had to type the address.
+- It had no top bar, so there was no language switch, Namo AI, SOS Help or
+  account button.
+- Its bottom bar did nothing: the buttons only moved the highlight. It also
+  highlighted **Pass** while you were booking a ride.
+- It was English only.
+- It had a second bottom bar, with the same buttons as the main one in a
+  different order.
+
+The booking form on it was already the same form the Travel tab uses, so no
+booking feature was lost.
+
+### What changed
+
+- The **advertisement slot** from the sketch is now on the Travel tab, between
+  the heading and the "Ride requests are a demo" notice. It shows an empty
+  "Advertisement" space until a real ad is supplied.
+- The old address `?screen=ride` still works. It opens the normal app on the
+  Travel tab, with the top bar and the usual bottom bar.
+- The separate page and its second bottom bar are gone. The raised centre
+  **Pass** button went with them; whether the main bar should have one is now
+  an open question (see the end of this file).
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. Security suite
+  **17/17**, ride suite **14/14**, SOS hold suite **9/9**, map suite **16/16**.
+- In the browser: `?screen=ride` opens the Travel tab with the top bar, and the
+  Home, Pass and Travel buttons all work from there. Switching to Hindi works
+  on that screen. The plain address still opens Home.
+- At 320, 360, 390 and 1280 px wide: no sideways scrolling, the top bar fits,
+  the ad slot fits the screen, none of the 11 form controls is covered by the
+  bottom bar, and the last item on the screen clears it. No errors from the
+  app in the console.
+- No ride request was submitted and nobody signed in during the check.
+
+---
+
+## 2026-10-14 (Phase 2A: real map and nearby places)
+
+The headline: **the Map tab is now a real, zoomable map, and it can list real
+places nearby.** The old screen was a grid of buttons labelled "not a map".
+
+### New: a real map
+
+- The map comes from **OpenStreetMap**, the free community-made world map. You
+  can drag it, pinch or tap + and − to zoom. The "© OpenStreetMap
+  contributors" credit is always visible in its corner, as their rules require.
+- The map opens on the whole Nashik–Trimbakeshwar area. It **never pretends to
+  know where you are**: no "you are here" dot appears until you allow it.
+
+### New: "Use my location"
+
+- Tap the target button on the map (or "Use my location" in the list). Your
+  browser asks first. Only if you allow it does a blue dot appear, with a
+  circle showing how accurate the reading is.
+- If you say no, if the phone cannot find you, or if it takes too long, the
+  screen says so in plain words and offers "Try again" where that could help.
+  If you are outside the Nashik–Trimbakeshwar area, it says how far away you
+  are instead of showing an empty map.
+- Your exact position never leaves your phone. The nearby search sends only a
+  point rounded to about 100 m, and nothing links it to your account.
+
+### New: nearby places and search
+
+- Choose a starting point: your location, a place you searched for, "Near
+  Ramkund", "Near Trimbakeshwar", or move the map and tap **"Search this
+  area"**. The list then shows real places within 500 m, 1, 2 or 5 km, nearest
+  first, with the distance to each.
+- Filters: temples and other places of worship, attractions, food, medical,
+  toilets, drinking water, parking, and ATMs/banks.
+- Tap a place on the map or in the list to see what OpenStreetMap knows about
+  it: its type, the address and opening hours if a contributor entered them,
+  and links to view it on OpenStreetMap or open it in Google Maps.
+- The search box finds places in the Nashik–Trimbakeshwar area by name.
+
+### What is real and what is demo
+
+- **Real (live):** the map itself, nearby places, and search results. All come
+  from OpenStreetMap. Volunteers map these places, so the app labels them
+  "OpenStreetMap · community data" and says that nobody from Namo Yatri or the
+  Kumbh administration has checked them. Some places are missing or unnamed,
+  and opening hours can be out of date. The list shows how recent the data is.
+- **Demo:** the 9 Kumbh sites we already had (Ramkund, Kushavarta and the
+  others). They stay on the map with a dashed outline, are labelled "Sample ·
+  demo data", and keep their "approximate location" warning. They never appear
+  under a facility filter, so a demo medical camp cannot sit among real
+  clinics.
+- **Not built yet:** routes and walking directions. Distances are straight-line
+  and say so.
+
+### When the free services are busy
+
+The free OpenStreetMap place service is often overloaded. When it is, the app
+waits up to about half a minute, tries a second free server, and then says
+plainly that nearby places could not be loaded, with a "Try again" button. The
+demo sites stay listed. It never shows half a list as if it were complete.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. The map loads only when
+  the Map tab is opened, so the rest of the app does not get heavier.
+- Security suite **17/17**, ride suite **14/14**, SOS hold suite **9/9**.
+- New map suite, `tests/geo.test.ts`: **16/16**, with the real services
+  replaced by a stand-in. It covers distances, categories, rounding of your
+  location, caching, the busy-server fallback and pause, half-finished replies,
+  timeouts, and search limits. Three deliberately broken versions of the code
+  each failed it.
+- In Chrome, against the real services: the map, the Ramkund and Tapovan
+  searches, filters, tapping places on the map and in the list, "Search this
+  area" and radius changes all worked. Two of the seven live lookups hit an
+  overloaded server and showed the error and "Try again", which then worked.
+  The location messages were checked by simulating each browser answer (allowed,
+  denied, too slow, outside the area), not by changing this browser's real
+  permission. Layout was checked at 320, 360 and 390 px wide (no sideways
+  scrolling) and at desktop width.
+
+---
+
 ## 2026-10-10 (acceptance fixes: SOS button and Namo AI button)
 
 The headline: **the three failures from the final acceptance check are fixed.**
@@ -448,18 +711,15 @@ The large original is kept as a printable wall map.
 
 ## Open questions
 
-1. **Does the new booking screen replace the existing Travel screen, or sit
-   beside it?** It currently sits beside it, reachable by its own URL, so
-   nothing existing is disturbed. The two have different navigation bars —
-   three items versus five — so they cannot both be the main flow.
+1. **Should the main bottom bar get the sketch's raised centre Pass button?**
+   The separate booking screen that had it was merged into the Travel tab on
+   2026-10-14, so the app now has one bottom bar. Adding the raised button
+   would change every screen.
 
-2. **Should the three-item bar replace the five-tab bar everywhere?** That is a
-   decision about the whole app, not just this screen.
-
-3. **Is the sketch's design direction meant to extend to the other screens?** If
+2. **Is the sketch's design direction meant to extend to the other screens?** If
    so, the remaining pilgrim screens should be rebuilt to match it rather than
    polished in their current style.
 
-4. **Data does not survive a restart.** The server keeps everything in memory,
+3. **Data does not survive a restart.** The server keeps everything in memory,
    so passes, rides and reports are lost when it stops. Fine for a demo in one
    sitting; a blocker for anything spanning two days.

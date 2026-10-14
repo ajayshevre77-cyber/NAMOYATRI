@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { MOCK_TRANSPORT_OPTIONS, PICKUP_POINTS, DROP_POINTS } from '../../src/data/kumbhData';
 import { MAX_PASSENGERS, MAX_ADVANCE_BOOKING_DAYS, maxPassengersFor } from '../../src/lib/fare';
 import { TransportOption } from '../../src/types';
+import { GeoPoint, isInServiceArea, SERVICE_AREA, NEARBY_RADII_M, DEFAULT_NEARBY_RADIUS_M } from '../../src/lib/geo';
+import { MAX_ROUTE_STOPS, MIN_ROUTE_STOPS, TravelMode, isTravelMode, roundRouteStop } from '../../src/lib/routing';
 
 // ID format validation
 export function isValidIdentifier(id: string): boolean {
@@ -199,5 +201,140 @@ export function validateEmergencyReportBody(req: Request, res: Response, next: N
     return;
   }
 
+  next();
+}
+
+/** Validated nearby lookup, left on `res.locals.geoNearby`. */
+export interface ValidNearbyQuery {
+  point: GeoPoint;
+  radiusM: number;
+}
+
+function parseCoordinate(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 20) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= min && n <= max ? n : null;
+}
+
+/**
+ * Validator for GET /api/geo/nearby: `lat`, `lon` and an optional `radius`
+ * from NEARBY_RADII_M. The point must be inside the service area.
+ */
+export function validateNearbyQuery(req: Request, res: Response, next: NextFunction): void {
+  const lat = parseCoordinate(req.query.lat, -90, 90);
+  const lon = parseCoordinate(req.query.lon, -180, 180);
+  if (lat === null || lon === null) {
+    res.status(400).json({ error: 'lat and lon must be valid coordinates.', code: 'INVALID_COORDINATES' });
+    return;
+  }
+  if (!isInServiceArea({ lat, lon })) {
+    res.status(400).json({ error: `Nearby search covers the ${SERVICE_AREA.name} only.`, code: 'OUTSIDE_SERVICE_AREA' });
+    return;
+  }
+
+  const radiusRaw = req.query.radius;
+  const radiusM =
+    radiusRaw === undefined ? DEFAULT_NEARBY_RADIUS_M : typeof radiusRaw === 'string' ? Number(radiusRaw) : NaN;
+  if (!(NEARBY_RADII_M as readonly number[]).includes(radiusM)) {
+    res.status(400).json({ error: `radius must be one of ${NEARBY_RADII_M.join(', ')} metres.`, code: 'INVALID_RADIUS' });
+    return;
+  }
+
+  const nearby: ValidNearbyQuery = { point: { lat, lon }, radiusM };
+  res.locals.geoNearby = nearby;
+  next();
+}
+
+export const GEO_SEARCH_MIN_LENGTH = 2;
+export const GEO_SEARCH_MAX_LENGTH = 100;
+
+/** Validated search, left on `res.locals.geoSearch`. */
+export interface ValidGeoSearch {
+  query: string;
+  language: 'en' | 'hi' | 'mr';
+}
+
+/** Validator for GET /api/geo/search: `q` (2–100 characters) and optional `lang`. */
+export function validateGeoSearchQuery(req: Request, res: Response, next: NextFunction): void {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (q.length < GEO_SEARCH_MIN_LENGTH || q.length > GEO_SEARCH_MAX_LENGTH) {
+    res.status(400).json({
+      error: `Search text must be ${GEO_SEARCH_MIN_LENGTH} to ${GEO_SEARCH_MAX_LENGTH} characters.`,
+      code: 'INVALID_SEARCH_QUERY',
+    });
+    return;
+  }
+
+  const lang = req.query.lang ?? 'en';
+  if (lang !== 'en' && lang !== 'hi' && lang !== 'mr') {
+    res.status(400).json({ error: 'lang must be en, hi or mr.', code: 'INVALID_LANGUAGE' });
+    return;
+  }
+
+  const search: ValidGeoSearch = { query: q, language: lang };
+  res.locals.geoSearch = search;
+  next();
+}
+
+/** Validated route request, left on `res.locals.routeRequest`. */
+export interface ValidRouteRequest {
+  mode: TravelMode;
+  stops: GeoPoint[];
+}
+
+const isCoordinate = (value: unknown, min: number, max: number): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+
+/**
+ * Validator for POST /api/geo/route: `{ mode, stops: [{ lat, lon }, ...] }`.
+ * Coordinates must be JSON numbers inside the service area, and two stops in
+ * a row cannot be the same place. The order is kept exactly as sent.
+ */
+export function validateRouteRequestBody(req: Request, res: Response, next: NextFunction): void {
+  const body = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    res.status(400).json({ error: 'Send a JSON object with mode and stops.', code: 'INVALID_ROUTE_REQUEST' });
+    return;
+  }
+
+  const { mode, stops } = body;
+  if (!isTravelMode(mode)) {
+    res.status(400).json({ error: 'mode must be walking or driving.', code: 'INVALID_TRAVEL_MODE' });
+    return;
+  }
+  if (!Array.isArray(stops) || stops.length < MIN_ROUTE_STOPS) {
+    res.status(400).json({ error: 'A route needs a start and a destination.', code: 'INVALID_ROUTE_STOPS' });
+    return;
+  }
+  if (stops.length > MAX_ROUTE_STOPS) {
+    res.status(400).json({ error: `A route can have at most ${MAX_ROUTE_STOPS} stops.`, code: 'TOO_MANY_ROUTE_STOPS' });
+    return;
+  }
+
+  const points: GeoPoint[] = [];
+  for (let i = 0; i < stops.length; i++) {
+    const { lat, lon } = stops[i] ?? {};
+    if (!isCoordinate(lat, -90, 90) || !isCoordinate(lon, -180, 180)) {
+      res.status(400).json({ error: `Stop ${i + 1} does not have valid coordinates.`, code: 'INVALID_COORDINATES' });
+      return;
+    }
+    if (!isInServiceArea({ lat, lon })) {
+      res.status(400).json({ error: `Stop ${i + 1} is outside the ${SERVICE_AREA.name}.`, code: 'OUTSIDE_SERVICE_AREA' });
+      return;
+    }
+    points.push({ lat, lon });
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    const a = roundRouteStop(points[i - 1]);
+    const b = roundRouteStop(points[i]);
+    if (a.lat === b.lat && a.lon === b.lon) {
+      res.status(400).json({ error: `Stops ${i} and ${i + 1} are the same place.`, code: 'DUPLICATE_ROUTE_STOP' });
+      return;
+    }
+  }
+
+  const routeRequest: ValidRouteRequest = { mode, stops: points };
+  res.locals.routeRequest = routeRequest;
   next();
 }

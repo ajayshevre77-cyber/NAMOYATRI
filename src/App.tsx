@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { AlertTriangle, ShieldCheck } from 'lucide-react';
 import { 
   UserRole, 
@@ -31,7 +31,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 // Views
 import { HomeScreen } from './views/HomeScreen';
 import { ExploreScreen } from './views/ExploreScreen';
-import { MapScreen } from './views/MapScreen';
 import { TravelScreen } from './views/TravelScreen';
 import { PassScreen } from './views/PassScreen';
 import { VolunteerScreen } from './views/VolunteerScreen';
@@ -40,7 +39,6 @@ import { SafetySOSScreen } from './views/SafetySOSScreen';
 import { LostAndFoundScreen } from './views/LostAndFoundScreen';
 import { FraudAlertScreen } from './views/FraudAlertScreen';
 import { AccountSecurityView } from './views/AccountSecurityView';
-import { RideBookingScreen } from './views/RideBookingScreen';
 import { DataFeedNotice } from './components/DataFeedNotice';
 import { fetchCollection, getAuthHeader } from './lib/api';
 
@@ -51,11 +49,25 @@ import { BusinessDashboard } from './views/BusinessDashboard';
 import { AdminOperationsDashboard } from './views/AdminOperationsDashboard';
 import { SIMHASTHA_DESTINATION } from './data/kumbhData';
 
-function AppContent() {
+// The map pulls in Leaflet, so it loads only when the Map tab is opened. If
+// that download fails (e.g. offline), say so instead of crashing the app.
+const MapScreen = lazy(() =>
+  import('./views/MapScreen')
+    .then(m => ({ default: m.MapScreen }))
+    .catch(() => ({
+      default: () => (
+        <p className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+          The map could not be loaded. Check your connection, then reload the page.
+        </p>
+      ),
+    }))
+);
+
+function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
   const { authModalOpen, authModalReason, closeAuthModal, userProfile, firebaseUser } = useAuth();
   const [currentRole, setCurrentRole] = useState<UserRole>('tourist');
   const [currentLanguage, setCurrentLanguage] = useState<SupportedLanguage>('en');
-  const [activeTab, setActiveTab] = useState<TouristTab>('home');
+  const [activeTab, setActiveTab] = useState<TouristTab>(initialTab);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [savedPlaceIds, setSavedPlaceIds] = useState<string[]>([]);
   const [isNamoAIOpen, setIsNamoAIOpen] = useState(false);
@@ -216,11 +228,13 @@ function AppContent() {
             )}
 
             {activeTab === 'map' && (
-              <MapScreen
-                places={places}
-                currentLanguage={currentLanguage}
-                onSelectPlace={(id) => setSelectedPlaceId(id)}
-              />
+              <Suspense fallback={<p className="py-12 text-center text-sm text-stone-500">Loading map…</p>}>
+                <MapScreen
+                  places={places}
+                  currentLanguage={currentLanguage}
+                  onSelectPlace={(id) => setSelectedPlaceId(id)}
+                />
+              </Suspense>
             )}
 
             {activeTab === 'travel' && (
@@ -361,36 +375,17 @@ function AppContent() {
   );
 }
 
-/**
- * Standalone mobile ride booking page, reached at `?screen=ride`.
- * It brings its own bottom bar, so it renders instead of the app shell rather
- * than inside it. Still needs the auth popup, which normally lives in AppContent.
- */
-function StandaloneRideBooking() {
-  const { authModalOpen, authModalReason, closeAuthModal } = useAuth();
-
-  return (
-    <>
-      <RideBookingScreen />
-      <AuthModal
-        isOpen={authModalOpen}
-        onClose={closeAuthModal}
-        reason={authModalReason}
-        currentLanguage="en"
-      />
-    </>
-  );
-}
-
 export default function App() {
-  const standaloneScreen =
+  // `?screen=ride` used to open a separate ride booking page. That page is now
+  // the Travel tab, so old links open the normal app there instead.
+  const screen =
     typeof window === 'undefined'
       ? null
       : new URLSearchParams(window.location.search).get('screen');
 
   return (
     <AuthProvider>
-      {standaloneScreen === 'ride' ? <StandaloneRideBooking /> : <AppContent />}
+      <AppContent initialTab={screen === 'ride' ? 'travel' : 'home'} />
     </AuthProvider>
   );
 }

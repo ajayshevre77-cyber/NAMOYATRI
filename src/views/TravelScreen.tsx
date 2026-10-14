@@ -3,6 +3,7 @@ import { SupportedLanguage, translations } from '../i18n';
 import { TransportOption } from '../types';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
 import { RideRequestPanel } from '../components/RideRequestPanel';
+import { AdPanel } from '../components/AdPanel';
 
 interface Props {
   transportOptions: TransportOption[];
@@ -11,8 +12,8 @@ interface Props {
 }
 
 /**
- * Travel tab. The booking form is RideRequestPanel, the app's single ride
- * request flow, shared with the `?screen=ride` page.
+ * Travel tab, the app's one ride booking screen (`?screen=ride` opens it).
+ * The booking form is RideRequestPanel, the app's single ride request flow.
  */
 export const TravelScreen: React.FC<Props> = ({
   transportOptions,
@@ -32,6 +33,10 @@ export const TravelScreen: React.FC<Props> = ({
           Request a shuttle, auto, cab or bus between Kumbh pickup points.
         </p>
       </div>
+
+      {/* Advertisement slot from the ride booking sketch. It shows a labelled
+          empty space until a real ad is supplied. */}
+      <AdPanel />
 
       {/* Honest Architectural Disclaimer */}
       <PlaceholderNotice

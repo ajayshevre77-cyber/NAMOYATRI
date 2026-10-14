@@ -32,9 +32,17 @@ import {
   validatePassPurchaseBody,
   validateEmergencyReportBody,
   checkTripFields,
-  ValidRideRequest
+  ValidRideRequest,
+  validateNearbyQuery,
+  validateGeoSearchQuery,
+  validateRouteRequestBody,
+  ValidNearbyQuery,
+  ValidGeoSearch,
+  ValidRouteRequest
 } from './server/middleware/validation';
 import { estimateTrip } from './src/lib/fare';
+import { findNearbyPlaces, searchPlaces, GeoServiceError } from './server/geo';
+import { getRoutingStatus, planRoute } from './server/routing';
 import { recordAuditEvent, getAuditLogs } from './server/audit';
 import { assignUserRoleServerSide, resolveServerRoleAndStatus } from './server/firebaseAdmin';
 
@@ -50,7 +58,9 @@ app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(secureCors);
 
-// Body parser with size limits
+// Body parser with size limits. A route request is at most 10 stops, so it
+// gets a much smaller limit; the general parser then skips the parsed body.
+app.use('/api/geo/route', express.json({ limit: '4kb' }));
 app.use(express.json({ limit: '500kb' }));
 
 // -------------------------------------------------------------
@@ -62,6 +72,12 @@ const aiLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 20, keyP
 const bookingLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'bk' });
 const emergencyLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 60, keyPrefix: 'sos' });
 const adminLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 60, keyPrefix: 'adm' });
+// Map lookups reach free OpenStreetMap services, which server/geo.ts also
+// throttles globally; this only stops one client hogging them.
+const geoLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'geo' });
+// Road routes spend a shared provider allowance (40 a minute, 2,000 a day on
+// the free plan), so one client gets fewer than for place lookups.
+const routeLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 20, keyPrefix: 'route' });
 
 // -------------------------------------------------------------
 // IN-MEMORY DEMO STORES
@@ -369,6 +385,59 @@ app.get('/api/places/:id', publicLimiter, validateIdParam('id'), (req: Request, 
     return;
   }
   res.json({ place });
+});
+
+/** Answers a failed map lookup with its status and stable code. */
+function sendGeoError(res: Response, err: unknown): void {
+  if (err instanceof GeoServiceError) {
+    if (err.retryAfterSeconds) res.setHeader('Retry-After', err.retryAfterSeconds);
+    res.status(err.status).json({
+      error: err.message,
+      code: err.code,
+      ...(err.retryAfterSeconds ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+    });
+    return;
+  }
+  console.error('[Namo Yatri] Map lookup failed unexpectedly:', err);
+  res.status(500).json({ error: 'The map lookup failed unexpectedly. Please try again.', code: 'GEO_LOOKUP_FAILED' });
+}
+
+// Nearby places from OpenStreetMap (Overpass). Real community-mapped data,
+// not checked by anyone: every place is stamped sourceType COMMUNITY.
+app.get('/api/geo/nearby', geoLimiter, validateNearbyQuery, async (req: Request, res: Response) => {
+  const { point, radiusM } = res.locals.geoNearby as ValidNearbyQuery;
+  try {
+    res.json(await findNearbyPlaces(point, radiusM));
+  } catch (err) {
+    sendGeoError(res, err);
+  }
+});
+
+// Place search (geocoding) via Nominatim, limited to the service area.
+app.get('/api/geo/search', geoLimiter, validateGeoSearchQuery, async (req: Request, res: Response) => {
+  const { query, language } = res.locals.geoSearch as ValidGeoSearch;
+  try {
+    res.json(await searchPlaces(query, language));
+  } catch (err) {
+    sendGeoError(res, err);
+  }
+});
+
+// Whether road routes can be calculated. Says nothing about the key itself.
+app.get('/api/geo/route/status', publicLimiter, (req: Request, res: Response) => {
+  res.json(getRoutingStatus());
+});
+
+// Road route through the stops in the order sent (server/routing.ts,
+// OpenRouteService today). Without a key it answers ROUTING_NOT_CONFIGURED,
+// never a made-up route.
+app.post('/api/geo/route', routeLimiter, validateRouteRequestBody, async (req: Request, res: Response) => {
+  const { stops, mode } = res.locals.routeRequest as ValidRouteRequest;
+  try {
+    res.json(await planRoute(stops, mode));
+  } catch (err) {
+    sendGeoError(res, err);
+  }
 });
 
 // Transport Options
