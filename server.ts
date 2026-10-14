@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import { timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 import { 
@@ -36,13 +35,17 @@ import {
   validateNearbyQuery,
   validateGeoSearchQuery,
   validateRouteRequestBody,
+  validateItineraryRequestBody,
   ValidNearbyQuery,
   ValidGeoSearch,
-  ValidRouteRequest
+  ValidRouteRequest,
+  ValidItineraryRequest
 } from './server/middleware/validation';
 import { estimateTrip } from './src/lib/fare';
 import { findNearbyPlaces, searchPlaces, GeoServiceError } from './server/geo';
 import { getRoutingStatus, planRoute } from './server/routing';
+import { GEMINI_MODEL, getGeminiClient, isGeminiConfigured } from './server/gemini';
+import { generateItinerary, getItineraryStatus } from './server/itinerary';
 import { recordAuditEvent, getAuditLogs } from './server/audit';
 import { assignUserRoleServerSide, resolveServerRoleAndStatus } from './server/firebaseAdmin';
 
@@ -58,9 +61,10 @@ app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(secureCors);
 
-// Body parser with size limits. A route request is at most 10 stops, so it
-// gets a much smaller limit; the general parser then skips the parsed body.
+// Body parser with size limits. Route and itinerary requests are small, so
+// they get a much smaller limit; the general parser then skips the parsed body.
 app.use('/api/geo/route', express.json({ limit: '4kb' }));
+app.use('/api/itinerary', express.json({ limit: '4kb' }));
 app.use(express.json({ limit: '500kb' }));
 
 // -------------------------------------------------------------
@@ -78,6 +82,15 @@ const geoLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 30, key
 // Road routes spend a shared provider allowance (40 a minute, 2,000 a day on
 // the free plan), so one client gets fewer than for place lookups.
 const routeLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 20, keyPrefix: 'route' });
+// Each AI trip plan costs a Gemini call, a few place lookups and up to 7
+// routes, so one client gets 10 every 10 minutes (server/itinerary.ts also
+// caps the whole server per day).
+const itineraryLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  maxRequests: 10,
+  keyPrefix: 'trip',
+  message: 'You have asked for a lot of trip plans in a short time. Please wait a few minutes before planning again.',
+});
 
 // -------------------------------------------------------------
 // IN-MEMORY DEMO STORES
@@ -308,15 +321,6 @@ const partnerApplications: PartnerApplicationRecord[] = [];
 let announcementsState = [...MOCK_OFFICIAL_ANNOUNCEMENTS];
 let fraudAlertsState = [...MOCK_FRAUD_ALERTS];
 
-// Helper to initialize Gemini SDK safely
-let geminiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
-  if (!geminiClient && process.env.GEMINI_API_KEY) {
-    geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  return geminiClient;
-}
-
 // =============================================================
 // 1. PUBLIC INFORMATIONAL ENDPOINTS
 // =============================================================
@@ -328,7 +332,7 @@ app.get('/api/health', publicLimiter, (req: Request, res: Response) => {
     service: 'Namo Yatri Security-Hardened API',
     destination: 'Nashik–Trimbakeshwar Simhastha Kumbh 2027',
     timestamp: new Date().toISOString(),
-    aiIntegrated: Boolean(process.env.GEMINI_API_KEY),
+    aiIntegrated: isGeminiConfigured(),
     firebaseAuthEnforced: true,
     rbacServerEnforced: true,
     version: '1.1.0-hardened',
@@ -387,8 +391,12 @@ app.get('/api/places/:id', publicLimiter, validateIdParam('id'), (req: Request, 
   res.json({ place });
 });
 
-/** Answers a failed map lookup with its status and stable code. */
-function sendGeoError(res: Response, err: unknown): void {
+/** Answers a failed map lookup (or trip plan) with its status and stable code. */
+function sendGeoError(
+  res: Response,
+  err: unknown,
+  fallback = { error: 'The map lookup failed unexpectedly. Please try again.', code: 'GEO_LOOKUP_FAILED' },
+): void {
   if (err instanceof GeoServiceError) {
     if (err.retryAfterSeconds) res.setHeader('Retry-After', err.retryAfterSeconds);
     res.status(err.status).json({
@@ -398,8 +406,8 @@ function sendGeoError(res: Response, err: unknown): void {
     });
     return;
   }
-  console.error('[Namo Yatri] Map lookup failed unexpectedly:', err);
-  res.status(500).json({ error: 'The map lookup failed unexpectedly. Please try again.', code: 'GEO_LOOKUP_FAILED' });
+  console.error(`[Namo Yatri] ${fallback.code}:`, err);
+  res.status(500).json(fallback);
 }
 
 // Nearby places from OpenStreetMap (Overpass). Real community-mapped data,
@@ -437,6 +445,24 @@ app.post('/api/geo/route', routeLimiter, validateRouteRequestBody, async (req: R
     res.json(await planRoute(stops, mode));
   } catch (err) {
     sendGeoError(res, err);
+  }
+});
+
+// Whether AI trip plans (and their road routes) can be made. Nothing about keys.
+app.get('/api/itinerary/status', publicLimiter, (req: Request, res: Response) => {
+  res.json(getItineraryStatus());
+});
+
+// AI trip plan (server/itinerary.ts): real OpenStreetMap places, chosen and
+// ordered by Gemini, each day routed by the route planner's provider. Public
+// like the map and the Namo AI chat. Nothing is stored. Without a Gemini key
+// it answers AI_NOT_CONFIGURED, never a canned plan.
+app.post('/api/itinerary/generate', itineraryLimiter, validateItineraryRequestBody, async (req: Request, res: Response) => {
+  const request = res.locals.itineraryRequest as ValidItineraryRequest;
+  try {
+    res.json(await generateItinerary(request));
+  } catch (err) {
+    sendGeoError(res, err, { error: 'The trip could not be planned because of an unexpected error. Please try again.', code: 'ITINERARY_FAILED' });
   }
 });
 
@@ -576,7 +602,7 @@ Guidelines:
       );
 
       const generatePromise = ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: GEMINI_MODEL,
         contents: query,
         config: {
           systemInstruction,
@@ -588,7 +614,7 @@ Guidelines:
 
       res.json({
         reply: response.text || 'Namaste. I am here to assist your holy pilgrimage to Nashik–Trimbakeshwar Simhastha Kumbh 2027.',
-        source: 'gemini-3.8-flash',
+        source: GEMINI_MODEL,
       });
       return;
     } catch (err: any) {
@@ -625,7 +651,7 @@ Guidelines:
   res.json({
     reply,
     source: 'built-in-answers',
-    note: process.env.GEMINI_API_KEY
+    note: isGeminiConfigured()
       ? 'The AI service could not be reached, so this is a built-in answer, not an AI response.'
       : 'AI is not configured on this server, so this is a built-in answer, not an AI response.',
   });

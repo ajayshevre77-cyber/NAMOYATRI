@@ -4,6 +4,102 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-14 (Phase 2C: AI trip planner)
+
+### What's new
+
+- **Plan a trip with Namo AI** on the Map tab, below "Plan a route" (there is
+  also a link to it under the map's title). Choose:
+  - how many days (1 to 7);
+  - where you start: the Nashik–Panchavati or Trimbakeshwar area, a place you
+    picked on the map or in search, or your location;
+  - your interests (pilgrimage, temples, history, architecture, nature, food,
+    shopping, local markets, sightseeing);
+  - budget, pace (how many stops a day), and walking or driving.
+- Namo AI makes a **day-by-day plan**: a title and a short summary for each
+  day, the stops in order, why each stop suits you, and a suggested time
+  there.
+- Each day shows its **road route**: total distance and travel time, and the
+  distance and time from each stop to the next. "Show on map" draws that day
+  on the map, with the starting point marked "S".
+- **You can change the plan:**
+  - Move stops up or down, or remove them.
+  - "Update route" recalculates that day's route.
+  - Switching Walk/Drive recalculates the day that is on the map.
+  - "Regenerate itinerary" asks for a new plan with your current choices.
+- **Directions** opens one stop in Google Maps; "Day N in Google Maps" opens
+  the whole day there.
+
+### Where the plan comes from
+
+- **Every stop is a real place from OpenStreetMap**, looked up around your
+  start: within about 3 km when walking, or 8 km when driving, plus
+  Trimbakeshwar or Nashik when that is further away. Only named places count.
+- The AI (Google Gemini, the same one the Namo AI chat uses) may only choose
+  from that list. If it names a place that is not on the list, that place is
+  removed and the plan says so. If it does that too often, or gets the number
+  of days wrong, the plan is not shown at all.
+- **Names, addresses, locations and opening hours always come from
+  OpenStreetMap, never from the AI.** The AI only writes the titles, the
+  reasons and the suggested times, and those are labelled as AI suggestions.
+  It is told not to claim history, popularity, crowds, timings or prices.
+- The Kumbh sample sites (demo listings) are never used in a plan.
+- **Gemini is not set up on this machine** (there is no key). Until it is, the
+  planner says "AI trip planning is not set up on this server yet" and makes
+  nothing up. Road routes still need the OpenRouteService key from Phase 2B.
+  Without that key, a plan still shows its stops, but no distances or times.
+- The AI receives the list of places and how far each is from your start, but
+  not your location. Place lookups use your start rounded to about 100 m, and
+  routes use it rounded to about 10 m. Nothing is saved.
+
+### Limits and when something goes wrong
+
+- Each person can make 10 plans per 10 minutes, and the whole server 300 a
+  day, because each plan costs a paid AI call and up to 7 route calculations.
+  At most 3 plans are made at once.
+- Clear messages for each problem. "Try again" appears only where it can
+  help, and you can cancel a slow request. If a new plan fails, the previous
+  one stays on screen.
+  - The map service, the AI service or the routing service is slow or busy.
+  - Not enough matching places were found.
+  - The AI's answer could not be used.
+  - A day's route could not be found.
+- If a day's route fails, the other days still get theirs. A day with a
+  single stop and no fixed start simply has no route.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. All six test suites
+  pass:
+  - security **17/17**, rides **14/14**, SOS hold **9/9**, map **16/16**,
+    routing **16/16**;
+  - the new trip-planner tests **17/17**.
+
+  The new tests use stand-ins for Gemini, OpenStreetMap and the routing
+  service. They never call the real ones.
+- Five deliberate bugs were added one at a time, and the tests caught every
+  one:
+  - the number of days was not checked;
+  - interests were ignored;
+  - the missing-key check was removed;
+  - the start was left out of the routes;
+  - invented places were kept.
+- **In the browser**, on a test copy of the app, using a **stand-in AI on
+  this computer** (its text says "MOCK") and the stand-in routing service:
+  - The places came from the **real** OpenStreetMap service.
+  - Checked: the "not set up" state, a plan with routes on the map,
+    reordering, removing, Update route, switching Walk/Drive, the
+    invented-place warning, an AI failure with the old plan kept, routing not
+    set up, starting from your location (a test location), Cancel, and the
+    per-person limit.
+  - Phone widths of 320, 360 and 390 px have no sideways scrolling.
+  - The real OpenStreetMap service timed out several times during testing,
+    and the planner showed its error each time without calling the AI.
+- **Not checked:** a real Gemini plan, and real road routes, because there
+  are no keys on this machine.
+
+---
+
 ## 2026-10-14 (Phase 2B: road routes on the map)
 
 ### What's new

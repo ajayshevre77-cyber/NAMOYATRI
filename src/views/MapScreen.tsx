@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Route as RouteIcon,
   Search,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { Place } from '../types';
@@ -18,6 +19,7 @@ import { VerificationBadge } from '../components/VerificationBadge';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
 import { MapFocus, PilgrimMap } from '../components/PilgrimMap';
 import { NewRouteStop, RoutePlanner, useRoutePlanner } from '../components/RoutePlanner';
+import { SelectedStartPlace, TripPlanner, aboutDuration, useTripPlanner } from '../components/TripPlanner';
 import { TRAVEL_MODES, formatDuration } from '../lib/routing';
 import {
   DEFAULT_NEARBY_RADIUS_M,
@@ -126,11 +128,41 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
     setFocus({ kind: 'area', centre, radiusM: r, seq: ++focusSeq.current });
   const focusPoint = (centre: GeoPoint) => setFocus({ kind: 'point', centre, zoom: 16, seq: ++focusSeq.current });
 
+  const scrollToMap = () =>
+    mapWrapRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+
   // A new route moves the map to it and brings the map into view.
   const planner = useRoutePlanner(route => {
     setFocus({ kind: 'bounds', bounds: route.bounds, seq: ++focusSeq.current });
-    mapWrapRef.current?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+    scrollToMap();
   });
+
+  // A trip day put on the map: fit its route, or its stops when there is no route.
+  const trip = useTripPlanner(({ points, route }) => {
+    if (route) {
+      setFocus({ kind: 'bounds', bounds: route.bounds, seq: ++focusSeq.current });
+    } else if (points.length > 1) {
+      const lats = points.map(p => p.lat);
+      const lons = points.map(p => p.lon);
+      setFocus({
+        kind: 'bounds',
+        bounds: { south: Math.min(...lats), west: Math.min(...lons), north: Math.max(...lats), east: Math.max(...lons) },
+        seq: ++focusSeq.current,
+      });
+    } else if (points.length === 1) {
+      focusPoint(points[0]);
+    }
+    scrollToMap();
+  });
+
+  // The map shows one set of route stops at a time: working on your own
+  // route takes a trip day off the map.
+  useEffect(() => {
+    if (planner.stops.length > 0) trip.showDay(null);
+    // Only an edit to the route planner should do this, not a re-render.
+  }, [planner.stops, planner.route]);
+
+  const tripDay = trip.mapDay;
 
   // Live places for the current anchor and radius. Each change cancels the
   // previous request, and a cancelled request never writes its result.
@@ -271,6 +303,16 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
     const pos = await getPosition();
     if (pos) setAnchorAt(pos, 'your location', true);
   };
+
+  /** The selected place, offered to the trip planner as a starting point. */
+  const selectedStart: SelectedStartPlace | null =
+    selection?.type === 'live'
+      ? { point: { lat: selection.place.lat, lon: selection.place.lon }, label: liveName(selection.place), kind: 'place' }
+      : selection?.type === 'sample'
+        ? { point: samplePoint(selection.place), label: placeName(selection.place), kind: 'sample', note: 'Sample site: approximate location' }
+        : selection?.type === 'search'
+          ? { point: { lat: selection.result.lat, lon: selection.result.lon }, label: selection.result.name, kind: 'place' }
+          : null;
 
   const startRouteFromMyLocation = async () => {
     const pos = await getPosition();
@@ -656,6 +698,14 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
           A live OpenStreetMap map with nearby places mapped by its community. Kumbh sites marked “Sample” are demo
           listings with approximate locations.
         </p>
+        <a
+          id="map-trip-planner-link"
+          href="#trip-planner"
+          className="mt-1 inline-flex min-h-12 items-center gap-1.5 rounded-xl px-1 text-xs font-semibold text-orange-800 underline"
+        >
+          <Sparkles className="h-4 w-4" />
+          Plan a multi-day trip with Namo AI
+        </a>
       </div>
 
       {/* Search: submit only, never as-you-type (Nominatim policy). */}
@@ -814,9 +864,9 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
               radiusM={radiusM}
               selectedId={selectedId}
               focus={focus}
-              routeStops={planner.stops}
-              routePath={planner.route?.path ?? null}
-              routeMode={planner.route?.mode ?? planner.mode}
+              routeStops={tripDay ? tripDay.stops : planner.stops}
+              routePath={tripDay ? tripDay.path : (planner.route?.path ?? null)}
+              routeMode={tripDay ? (tripDay.route?.mode ?? trip.mode) : (planner.route?.mode ?? planner.mode)}
               currentLanguage={currentLanguage}
               onSelectLive={p => chooseLive(p, 'map')}
               onSelectSample={p => chooseSample(p, 'map')}
@@ -850,7 +900,25 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
             )}
 
             {/* Clear of the attribution, which takes the bottom-right corner. */}
-            {planner.route && (
+            {tripDay && (
+              <p
+                id="map-route-chip"
+                className="pointer-events-none absolute bottom-8 left-3 z-[1100] max-w-[calc(100%-1.5rem)] rounded-xl bg-white/95 px-3 py-1.5 text-xs text-stone-800 shadow-md ring-1 ring-stone-300"
+              >
+                <span className="font-bold">Trip day {tripDay.day}</span>
+                {tripDay.route ? (
+                  <>
+                    {' · '}
+                    <span className="font-bold">{formatDistance(tripDay.route.distanceM / 1000)}</span> by road ·{' '}
+                    <span className="font-bold">{aboutDuration(tripDay.route.durationS)}</span>{' '}
+                    {TRAVEL_MODES.find(m => m.id === tripDay.route!.mode)?.verb}
+                  </>
+                ) : (
+                  ' · stops only, no road route'
+                )}
+              </p>
+            )}
+            {!tripDay && planner.route && (
               <p
                 id="map-route-chip"
                 className="pointer-events-none absolute bottom-8 left-3 z-[1100] max-w-[calc(100%-1.5rem)] rounded-xl bg-white/95 px-3 py-1.5 text-xs text-stone-800 shadow-md ring-1 ring-stone-300"
@@ -907,7 +975,7 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
               <span className="h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white" />
               You (only after you allow it)
             </span>
-            {planner.stops.length > 0 && (
+            {(planner.stops.length > 0 || tripDay) && (
               <span className="inline-flex items-center gap-1">
                 <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-green-600 text-[8px] font-bold text-white">
                   1
@@ -915,7 +983,7 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
                 Route stops, in order
               </span>
             )}
-            {planner.route && (
+            {(tripDay ? tripDay.path : planner.route) && (
               <span className="inline-flex items-center gap-1">
                 <span className="h-1 w-4 rounded-full bg-blue-700" />
                 Road route (dotted when walking)
@@ -929,6 +997,17 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
           {renderDetails()}
 
           <RoutePlanner planner={planner} onUseMyLocation={startRouteFromMyLocation} locating={locating} />
+
+          <TripPlanner
+            trip={trip}
+            selectedPlace={selectedStart}
+            onUseMyLocation={getPosition}
+            locating={locating}
+            onFocusPoint={point => {
+              focusPoint(point);
+              scrollToMap();
+            }}
+          />
 
           <section aria-labelledby="nearby-heading" className="space-y-2 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-2">

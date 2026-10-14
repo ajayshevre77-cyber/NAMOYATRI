@@ -4,6 +4,20 @@ import { MAX_PASSENGERS, MAX_ADVANCE_BOOKING_DAYS, maxPassengersFor } from '../.
 import { TransportOption } from '../../src/types';
 import { GeoPoint, isInServiceArea, SERVICE_AREA, NEARBY_RADII_M, DEFAULT_NEARBY_RADIUS_M } from '../../src/lib/geo';
 import { MAX_ROUTE_STOPS, MIN_ROUTE_STOPS, TravelMode, isTravelMode, roundRouteStop } from '../../src/lib/routing';
+import {
+  MAX_START_LABEL_LENGTH,
+  MAX_TRIP_DAYS,
+  MIN_TRIP_DAYS,
+  TRIP_INTERESTS,
+  TripArea,
+  TripBudget,
+  TripInterest,
+  TripPace,
+  isTripArea,
+  isTripBudget,
+  isTripInterest,
+  isTripPace,
+} from '../../src/lib/itinerary';
 
 // ID format validation
 export function isValidIdentifier(id: string): boolean {
@@ -336,5 +350,94 @@ export function validateRouteRequestBody(req: Request, res: Response, next: Next
 
   const routeRequest: ValidRouteRequest = { mode, stops: points };
   res.locals.routeRequest = routeRequest;
+  next();
+}
+
+/** Where a validated trip starts: a point (also each day's route start) or an area to plan around. */
+export type ValidTripStart = { type: 'area'; area: TripArea } | { type: 'point'; point: GeoPoint; label: string };
+
+/** Validated itinerary request, left on `res.locals.itineraryRequest`. */
+export interface ValidItineraryRequest {
+  days: number;
+  start: ValidTripStart;
+  interests: TripInterest[];
+  budget: TripBudget;
+  pace: TripPace;
+  mode: TravelMode;
+}
+
+/** Trims a client label and drops control characters; null if nothing usable is left. */
+function cleanLabel(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.length > 0 && cleaned.length <= max ? cleaned : null;
+}
+
+/**
+ * Validator for POST /api/itinerary/generate:
+ * `{ days, start, interests, budget, pace, mode }`. `start` is either
+ * `{ type: 'area', area }` or `{ type: 'point', lat, lon, label }` inside the
+ * service area. Interests must be known and not repeated.
+ */
+export function validateItineraryRequestBody(req: Request, res: Response, next: NextFunction): void {
+  const body = req.body;
+  const fail = (code: string, error: string) => {
+    res.status(400).json({ error, code });
+  };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('INVALID_ITINERARY_REQUEST', 'Send a JSON object with days, start, interests, budget, pace and mode.');
+    return;
+  }
+
+  const { days, start, interests, budget, pace, mode } = body;
+  if (typeof days !== 'number' || !Number.isInteger(days) || days < MIN_TRIP_DAYS || days > MAX_TRIP_DAYS) {
+    fail('INVALID_TRIP_DAYS', `A trip can be ${MIN_TRIP_DAYS} to ${MAX_TRIP_DAYS} days long.`);
+    return;
+  }
+  if (
+    !Array.isArray(interests) || interests.length === 0 || interests.length > TRIP_INTERESTS.length ||
+    !interests.every(isTripInterest) || new Set(interests).size !== interests.length
+  ) {
+    fail('INVALID_INTERESTS', 'Choose at least one interest from the list, each only once.');
+    return;
+  }
+  if (!isTripBudget(budget)) {
+    fail('INVALID_BUDGET', 'budget must be economical, moderate or flexible.');
+    return;
+  }
+  if (!isTripPace(pace)) {
+    fail('INVALID_PACE', 'pace must be relaxed, balanced or packed.');
+    return;
+  }
+  if (!isTravelMode(mode)) {
+    fail('INVALID_TRAVEL_MODE', 'mode must be walking or driving.');
+    return;
+  }
+
+  let validStart: ValidTripStart;
+  if (start?.type === 'area' && isTripArea(start.area)) {
+    validStart = { type: 'area', area: start.area };
+  } else if (start?.type === 'point') {
+    if (!isCoordinate(start.lat, -90, 90) || !isCoordinate(start.lon, -180, 180)) {
+      fail('INVALID_COORDINATES', 'The starting point does not have valid coordinates.');
+      return;
+    }
+    if (!isInServiceArea({ lat: start.lat, lon: start.lon })) {
+      fail('OUTSIDE_SERVICE_AREA', `The starting point must be in the ${SERVICE_AREA.name}.`);
+      return;
+    }
+    const label = cleanLabel(start.label, MAX_START_LABEL_LENGTH);
+    if (!label) {
+      fail('INVALID_TRIP_START', `The starting point needs a name of up to ${MAX_START_LABEL_LENGTH} characters.`);
+      return;
+    }
+    validStart = { type: 'point', point: { lat: start.lat, lon: start.lon }, label };
+  } else {
+    fail('INVALID_TRIP_START', 'Choose a starting place, your location or an area to plan around.');
+    return;
+  }
+
+  const itineraryRequest: ValidItineraryRequest = { days, start: validStart, interests, budget, pace, mode };
+  res.locals.itineraryRequest = itineraryRequest;
   next();
 }

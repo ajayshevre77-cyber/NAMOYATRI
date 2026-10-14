@@ -16,11 +16,12 @@ export class GeoRequestError extends Error {
 }
 
 /**
- * Calls one of our /api/geo endpoints (GET unless `init` says otherwise).
+ * Calls one of our map endpoints (/api/geo, /api/itinerary; GET unless `init`
+ * says otherwise).
  * Throws GeoRequestError with a message fit to show the user. Rethrows
  * AbortError so callers can ignore it.
  */
-async function requestGeoJson<T>(url: string, signal?: AbortSignal, init?: RequestInit): Promise<T> {
+export async function requestGeoJson<T>(url: string, signal?: AbortSignal, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { ...init, signal });

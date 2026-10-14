@@ -47,7 +47,7 @@ type RouteState =
 type Availability = 'checking' | 'configured' | 'not_configured' | 'unknown';
 
 /** Failures where asking again might work. The rest need a different route or a server fix. */
-const RETRYABLE_CODES = new Set([
+export const RETRYABLE_CODES = new Set([
   'ROUTING_PROVIDER_BUSY',
   'ROUTING_PROVIDER_TIMEOUT',
   'ROUTING_PROVIDER_UNREACHABLE',
@@ -87,6 +87,12 @@ export function googleMapsDirectionsUrl(stops: RouteStopItem[], mode: TravelMode
   if (last) params.set('destination', at(last.point));
   if (rest.length > 0) params.set('waypoints', rest.map(s => at(s.point)).join('|'));
   return `https://www.google.com/maps/dir/?${params}`;
+}
+
+/** Google Maps directions to one place, from wherever the phone is. */
+export function googleMapsPlaceDirectionsUrl(point: GeoPoint, mode: TravelMode): string {
+  const r = roundRouteStop(point);
+  return `https://www.google.com/maps/dir/?${new URLSearchParams({ api: '1', destination: `${r.lat},${r.lon}`, travelmode: mode })}`;
 }
 
 /**

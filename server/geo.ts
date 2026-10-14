@@ -2,6 +2,7 @@
  * Server-side access to OpenStreetMap services for the map screen.
  *
  * - Nearby places: Overpass API.
+ * - Candidate places for the AI trip planner: Overpass API, same queue.
  * - Place search (geocoding): Nominatim.
  *
  * Both are free community services with usage policies, so every call goes
@@ -29,6 +30,7 @@ import {
   roundPoint,
   SERVICE_AREA,
 } from '../src/lib/geo';
+import { TripCandidate, TripCandidatesResponse, TripPlaceCategory, TripPlaceDetails } from '../src/lib/itinerary';
 
 /** An error with the HTTP status and stable code the route should answer with. */
 export class GeoServiceError extends Error {
@@ -162,6 +164,8 @@ export function resetGeoStateForTests(): void {
   overpassGate = createSerialGate(1000, 4);
   nominatimGate = createSerialGate(1100, 5);
   blockedUntil = new Map();
+  tripCache = new TtlCache<TripCandidatesResponse>(6 * 60 * 60 * 1000, 100);
+  tripInFlight = new Map();
 }
 
 function secondsBlocked(url: string): number {
@@ -367,8 +371,18 @@ function overpassRemarkIsError(body: unknown): boolean {
   return typeof remark === 'string' && /error|timed out/i.test(remark);
 }
 
-async function queryOverpass(centre: GeoPoint, radiusM: number): Promise<NearbyPlacesResponse> {
-  const query = buildOverpassQuery(centre, radiusM);
+/** How current the Overpass copy that answered was, if it said. */
+function overpassDataTimestamp(body: unknown): string | null {
+  const timestamp = (body as any)?.osm3s?.timestamp_osm_base;
+  return typeof timestamp === 'string' && !Number.isNaN(Date.parse(timestamp)) ? timestamp : null;
+}
+
+/**
+ * Runs one Overpass query: each configured URL in turn, skipping any that is
+ * backing off, through the shared queue. `parse` turns the reply into the
+ * result; a GeoServiceError from it moves on to the next URL.
+ */
+async function runOverpass<T>(query: string, timeoutMs: number, parse: (body: unknown) => T): Promise<T> {
   let lastError: GeoServiceError | null = null;
 
   for (const url of overpassUrls()) {
@@ -386,7 +400,7 @@ async function queryOverpass(centre: GeoPoint, radiusM: number): Promise<NearbyP
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({ data: query }).toString(),
           },
-          18_000,
+          timeoutMs,
           'The OpenStreetMap place service',
         ),
       );
@@ -394,18 +408,7 @@ async function queryOverpass(centre: GeoPoint, radiusM: number): Promise<NearbyP
         blockedUntil.set(url, Date.now() + BACKOFF_MS);
         throw busyError('The OpenStreetMap place service', BACKOFF_MS / 1000);
       }
-      const { places, truncated } = parseOverpassElements(body, centre);
-      const timestamp = (body as any)?.osm3s?.timestamp_osm_base;
-      return {
-        places,
-        centre,
-        radiusM,
-        source: 'OPENSTREETMAP_OVERPASS',
-        attribution: OSM_ATTRIBUTION,
-        fetchedAt: new Date().toISOString(),
-        dataTimestamp: typeof timestamp === 'string' && !Number.isNaN(Date.parse(timestamp)) ? timestamp : null,
-        truncated,
-      };
+      return parse(body);
     } catch (err) {
       if (!(err instanceof GeoServiceError)) throw err;
       lastError = err;
@@ -414,6 +417,22 @@ async function queryOverpass(centre: GeoPoint, radiusM: number): Promise<NearbyP
     }
   }
   throw lastError ?? new GeoServiceError(502, 'GEO_UPSTREAM_FAILED', 'No OpenStreetMap place service is configured.');
+}
+
+function queryOverpass(centre: GeoPoint, radiusM: number): Promise<NearbyPlacesResponse> {
+  return runOverpass(buildOverpassQuery(centre, radiusM), 18_000, body => {
+    const { places, truncated } = parseOverpassElements(body, centre);
+    return {
+      places,
+      centre,
+      radiusM,
+      source: 'OPENSTREETMAP_OVERPASS',
+      attribution: OSM_ATTRIBUTION,
+      fetchedAt: new Date().toISOString(),
+      dataTimestamp: overpassDataTimestamp(body),
+      truncated,
+    };
+  });
 }
 
 /**
@@ -441,6 +460,218 @@ export async function findNearbyPlaces(point: GeoPoint, radiusM: number): Promis
     })
     .finally(() => nearbyInFlight.delete(key));
   nearbyInFlight.set(key, request);
+  return request;
+}
+
+// ---------------------------------------------------------------------------
+// Overpass: candidate places for the AI trip planner
+// ---------------------------------------------------------------------------
+
+/**
+ * The OpenStreetMap tags worth visiting on a trip. Broader than the nearby
+ * search (history, nature, markets and shops too) and named places only,
+ * since an itinerary cannot send anyone to "an unnamed temple".
+ */
+const TRIP_TAG_VALUES: Record<string, string[]> = {
+  amenity: ['place_of_worship', 'marketplace', 'restaurant', 'cafe', 'fast_food', 'food_court'],
+  tourism: ['attraction', 'viewpoint', 'museum', 'gallery'],
+  historic: ['monument', 'fort', 'ruins', 'archaeological_site', 'castle', 'city_gate', 'heritage', 'tomb', 'building'],
+  leisure: ['park', 'garden', 'nature_reserve'],
+  natural: ['peak', 'waterfall', 'cave_entrance'],
+  shop: ['mall', 'department_store', 'gift', 'souvenir', 'craft', 'art', 'books', 'religion'],
+};
+
+const TRIP_KIND_LABELS: Record<string, string> = {
+  museum: 'Museum',
+  gallery: 'Art gallery',
+  viewpoint: 'Viewpoint',
+  attraction: 'Tourist attraction',
+  park: 'Park',
+  garden: 'Garden',
+  nature_reserve: 'Nature reserve',
+  peak: 'Hill or peak',
+  waterfall: 'Waterfall',
+  cave_entrance: 'Cave',
+  marketplace: 'Marketplace',
+  mall: 'Shopping mall',
+  department_store: 'Department store',
+  gift: 'Gift shop',
+  souvenir: 'Souvenir shop',
+  craft: 'Craft shop',
+  art: 'Art shop',
+  books: 'Bookshop',
+  religion: 'Religious goods shop',
+  restaurant: 'Restaurant',
+  cafe: 'Café',
+  fast_food: 'Fast food',
+  food_court: 'Food court',
+  heritage: 'Heritage site',
+  building: 'Historic building',
+  archaeological_site: 'Archaeological site',
+  city_gate: 'Historic city gate',
+};
+
+/** At most this many places per trip category, best ranked first. */
+export const MAX_TRIP_PLACES_PER_CATEGORY = 40;
+
+/**
+ * Maps OpenStreetMap tags to a trip category, or null to drop it. Checked in
+ * this order, so a temple that is also an attraction counts as worship and a
+ * fort that is also an attraction counts as historic.
+ */
+export function classifyTripTags(tags: Record<string, string>): { category: TripPlaceCategory; kind: string } | null {
+  if (['private', 'no'].includes(tags.access)) return null;
+  const has = (key: string) => TRIP_TAG_VALUES[key].includes(tags[key]);
+
+  if (tags.amenity === 'place_of_worship') {
+    const religion = RELIGION_LABELS[tags.religion];
+    return { category: 'worship', kind: religion ? `${religion} place of worship` : 'Place of worship' };
+  }
+  if (tags.tourism === 'museum' || tags.tourism === 'gallery') return { category: 'museum', kind: TRIP_KIND_LABELS[tags.tourism] };
+  if (has('historic')) {
+    return { category: 'historic', kind: TRIP_KIND_LABELS[tags.historic] ?? `Historic ${tags.historic.replace(/_/g, ' ')}` };
+  }
+  if (tags.tourism === 'viewpoint') return { category: 'viewpoint', kind: TRIP_KIND_LABELS.viewpoint };
+  if (tags.tourism === 'attraction') return { category: 'attraction', kind: TRIP_KIND_LABELS.attraction };
+  if (has('leisure')) return { category: 'nature', kind: TRIP_KIND_LABELS[tags.leisure] };
+  if (has('natural')) return { category: 'nature', kind: TRIP_KIND_LABELS[tags.natural] };
+  if (tags.amenity === 'marketplace') return { category: 'market', kind: TRIP_KIND_LABELS.marketplace };
+  if (has('shop')) return { category: 'shopping', kind: TRIP_KIND_LABELS[tags.shop] };
+  if (has('amenity')) return { category: 'food', kind: TRIP_KIND_LABELS[tags.amenity] };
+  return null;
+}
+
+export function buildTripOverpassQuery(centre: GeoPoint, radiusM: number): string {
+  const around = `(around:${radiusM},${centre.lat},${centre.lon})`;
+  const filters = Object.entries(TRIP_TAG_VALUES)
+    .map(([key, values]) => `nwr["${key}"~"^(${values.join('|')})$"]["name"]${around};`)
+    .join('');
+  return `[out:json][timeout:20];(${filters});out center tags;`;
+}
+
+/**
+ * Turns an Overpass reply into trip candidates: named, inside the service
+ * area, in a known category, at most MAX_TRIP_PLACES_PER_CATEGORY each.
+ * Within a category, places with a Wikipedia or Wikidata link rank as if
+ * they were half as far away, so a well-documented temple is not crowded out
+ * by nearer roadside shrines. That ranking is never shown to anyone as
+ * "popular" or "famous".
+ */
+export function parseTripCandidates(body: unknown, centre: GeoPoint): { places: TripCandidate[]; truncated: boolean } {
+  const elements = (body as { elements?: unknown })?.elements;
+  if (!Array.isArray(elements)) {
+    throw new GeoServiceError(502, 'GEO_UPSTREAM_BAD_RESPONSE', 'OpenStreetMap sent a reply we could not read. Please try again.');
+  }
+
+  const seen = new Set<string>();
+  const ranked: { place: TripCandidate; rank: number }[] = [];
+
+  for (const el of elements as any[]) {
+    if (!el || !['node', 'way', 'relation'].includes(el.type) || !Number.isSafeInteger(el.id)) continue;
+    const id = `${el.type}/${el.id}`;
+    if (seen.has(id)) continue;
+
+    const lat = el.type === 'node' ? el.lat : el.center?.lat;
+    const lon = el.type === 'node' ? el.lon : el.center?.lon;
+    if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (!isInServiceArea({ lat, lon })) continue;
+
+    const tags: Record<string, string> = el.tags && typeof el.tags === 'object' ? el.tags : {};
+    const name = clip(tags['name:en'], 120) ?? clip(tags.name, 120);
+    if (!name) continue;
+    const match = classifyTripTags(tags);
+    if (!match) continue;
+    seen.add(id);
+
+    const address = [tags['addr:housenumber'], tags['addr:street'], tags['addr:suburb'] ?? tags['addr:city']]
+      .map(part => clip(part, 80))
+      .filter(Boolean)
+      .join(', ');
+
+    const details: TripPlaceDetails = {};
+    for (const key of ['religion', 'denomination', 'cuisine', 'historic', 'heritage', 'fee'] as const) {
+      const value = clip(tags[key], 60);
+      if (value) details[key] = value;
+    }
+    const description = clip(tags.description, 200);
+    if (description) details.description = description;
+
+    const hasEncyclopediaLink = Boolean(clip(tags.wikipedia, 200) || clip(tags.wikidata, 40));
+    const place: TripCandidate = {
+      id,
+      osmUrl: `https://www.openstreetmap.org/${id}`,
+      name,
+      category: match.category,
+      kind: match.kind,
+      lat,
+      lon,
+      address: address || null,
+      openingHours: clip(tags.opening_hours, 200),
+      details,
+      hasEncyclopediaLink,
+      sourceType: 'COMMUNITY',
+    };
+    const km = haversineKm(centre, { lat, lon });
+    ranked.push({ place, rank: hasEncyclopediaLink ? km / 2 : km });
+  }
+
+  ranked.sort((a, b) => a.rank - b.rank);
+
+  const perCategory = new Map<TripPlaceCategory, number>();
+  let truncated = false;
+  const places: TripCandidate[] = [];
+  for (const { place } of ranked) {
+    const count = perCategory.get(place.category) ?? 0;
+    if (count >= MAX_TRIP_PLACES_PER_CATEGORY) {
+      truncated = true;
+      continue;
+    }
+    perCategory.set(place.category, count + 1);
+    places.push(place);
+  }
+  return { places, truncated };
+}
+
+let tripCache = new TtlCache<TripCandidatesResponse>(6 * 60 * 60 * 1000, 100);
+let tripInFlight = new Map<string, Promise<TripCandidatesResponse>>();
+
+/**
+ * Named places worth visiting within `radiusM` of `point`, for the trip
+ * planner. Same rules as nearby search: the point is rounded to about 100 m
+ * (also the cache key), and the call shares the Overpass queue, back-off and
+ * fallback URLs with every other map lookup.
+ */
+export async function findTripCandidates(point: GeoPoint, radiusM: number): Promise<TripCandidatesResponse> {
+  const centre = roundPoint(point);
+  if (!isInServiceArea(centre)) {
+    throw new GeoServiceError(400, 'OUTSIDE_SERVICE_AREA', `Trips can be planned in the ${SERVICE_AREA.name} only.`);
+  }
+
+  const key = `${centre.lat},${centre.lon},${radiusM}`;
+  const cached = tripCache.get(key);
+  if (cached) return cached;
+
+  const pending = tripInFlight.get(key);
+  if (pending) return pending;
+
+  const request = runOverpass(buildTripOverpassQuery(centre, radiusM), 25_000, body => {
+    const { places, truncated } = parseTripCandidates(body, centre);
+    const result: TripCandidatesResponse = {
+      places,
+      centre,
+      radiusM,
+      fetchedAt: new Date().toISOString(),
+      dataTimestamp: overpassDataTimestamp(body),
+      truncated,
+    };
+    return result;
+  })
+    .then(result => {
+      tripCache.set(key, result);
+      return result;
+    })
+    .finally(() => tripInFlight.delete(key));
+  tripInFlight.set(key, request);
   return request;
 }
 

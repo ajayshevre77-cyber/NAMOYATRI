@@ -18,6 +18,8 @@ export type MapFocus =
 export interface MapRouteStop {
   point: GeoPoint;
   label: string;
+  /** Text in the badge instead of the position, e.g. "S" for a trip's starting point. */
+  badge?: string;
 }
 
 interface Props {
@@ -100,6 +102,10 @@ const STOP_BADGE: Record<'start' | 'via' | 'end', string> = {
   end: 'bg-stone-900',
 };
 
+/** Only digits or a short code ever reach the badge HTML; labels are never put there. */
+const badgeText = (stop: MapRouteStop, index: number) =>
+  stop.badge && /^[A-Z0-9]{1,2}$/.test(stop.badge) ? stop.badge : String(index + 1);
+
 /**
  * The calculated route line and the planned stops. Stops are DOM markers
  * (numbered, keyboard-focusable); the line is drawn from the provider's own
@@ -108,16 +114,16 @@ const STOP_BADGE: Record<'start' | 'via' | 'end', string> = {
 function RouteLayer({ stops, path, mode }: { stops: MapRouteStop[]; path: [number, number][] | null; mode: TravelMode }) {
   const icons = useMemo(
     () =>
-      stops.map((_, i) => {
+      stops.map((stop, i) => {
         const role = i === 0 ? 'start' : i === stops.length - 1 ? 'end' : 'via';
         return divIcon({
           className: '',
-          html: `<span class="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow-md ${STOP_BADGE[role]}">${i + 1}</span>`,
+          html: `<span class="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow-md ${STOP_BADGE[role]}">${badgeText(stop, i)}</span>`,
           iconSize: [28, 28],
           iconAnchor: [14, 14],
         });
       }),
-    [stops.length],
+    [stops.map((s, i) => badgeText(s, i)).join('|')],
   );
 
   return (
@@ -156,11 +162,11 @@ function RouteLayer({ stops, path, mode }: { stops: MapRouteStop[]; path: [numbe
           key={`${i}:${stop.point.lat},${stop.point.lon}`}
           position={[stop.point.lat, stop.point.lon]}
           icon={icons[i]}
-          title={`Route stop ${i + 1}: ${stop.label}`}
+          title={`Route stop ${badgeText(stop, i)}: ${stop.label}`}
           zIndexOffset={1000}
         >
           <Tooltip direction="top" offset={[0, -14]}>
-            {`${i === 0 ? 'Start' : i === stops.length - 1 ? 'Destination' : `Stop ${i + 1}`}: ${stop.label}`}
+            {`${i === 0 ? 'Start' : i === stops.length - 1 ? 'Destination' : `Stop ${badgeText(stop, i)}`}: ${stop.label}`}
           </Tooltip>
         </Marker>
       ))}
