@@ -1,20 +1,24 @@
-import React, { useState } from 'react';
-import { Search, MapPin, Filter, Sparkles, Navigation } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Search, MapPin, Filter, Sparkles, Navigation, Map } from 'lucide-react';
 import { Place, PlaceCategory } from '../types';
 import { SupportedLanguage, translations } from '../i18n';
 import { VerificationBadge } from '../components/VerificationBadge';
 import { PlaceImage } from '../components/PlaceImage';
+import { searchSamplePlaces, suggestSampleQueries } from '../lib/placeSearch';
 
 interface Props {
   places: Place[];
   currentLanguage: SupportedLanguage;
   onSelectPlace: (placeId: string) => void;
+  /** Opens the Map tab and searches OpenStreetMap there for `query`. */
+  onSearchMap: (query: string) => void;
 }
 
 export const ExploreScreen: React.FC<Props> = ({
   places,
   currentLanguage,
   onSelectPlace,
+  onSearchMap,
 }) => {
   const t = translations[currentLanguage];
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -35,16 +39,15 @@ export const ExploreScreen: React.FC<Props> = ({
     { id: 'rest_area', label: t.catRestAreas },
   ];
 
-  const filteredPlaces = places.filter((p) => {
-    const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
-    const query = search.trim().toLowerCase();
-    const matchesSearch = !query || 
-      p.name[currentLanguage]?.toLowerCase().includes(query) ||
-      p.name.en.toLowerCase().includes(query) ||
-      p.location.area.toLowerCase().includes(query) ||
-      p.description.en.toLowerCase().includes(query);
-    return matchesCategory && matchesSearch;
-  });
+  // Same matching as Home and the map (names in every language, area,
+  // category, facilities, description), best matches first.
+  const query = search.trim();
+  const matchedPlaces = useMemo(() => (query ? searchSamplePlaces(places, query) : places), [places, query]);
+  const filteredPlaces = matchedPlaces.filter((p) => selectedCategory === 'all' || p.category === selectedCategory);
+  const suggestions = useMemo(
+    () => (query && matchedPlaces.length === 0 ? suggestSampleQueries(places, query) : []),
+    [places, query, matchedPlaces],
+  );
 
   return (
     <div id="explore-screen-view" className="space-y-4 pb-12">
@@ -165,6 +168,34 @@ export const ExploreScreen: React.FC<Props> = ({
           <p className="text-xs text-stone-500 max-w-sm mx-auto">
             Try adjusting your search keywords or switching category filters.
           </p>
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs text-stone-600">
+              <span>{t.searchDidYouMean}</span>
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  onClick={() => setSearch(suggestion)}
+                  className="min-h-12 rounded-lg bg-orange-50 px-2.5 font-semibold text-orange-800 hover:bg-orange-100 transition"
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          )}
+          {query.length >= 2 && (
+            <div>
+              <button
+                id="explore-search-on-map"
+                type="button"
+                onClick={() => onSearchMap(query)}
+                className="inline-flex max-w-full min-h-12 items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 text-xs font-semibold text-orange-800 hover:bg-orange-100 transition"
+              >
+                <Map className="w-4 h-4 shrink-0" />
+                <span className="truncate">{t.searchOnMap} “{query}”</span>
+              </button>
+            </div>
+          )}
           <button
             onClick={() => {
               setSelectedCategory('all');

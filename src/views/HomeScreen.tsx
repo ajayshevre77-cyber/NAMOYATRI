@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   Search, 
   MapPin, 
@@ -27,11 +27,14 @@ import { VerificationBadge } from '../components/VerificationBadge';
 import { PlaceImage } from '../components/PlaceImage';
 import { SIMHASTHA_DESTINATION } from '../data/kumbhData';
 import { TouristTab } from '../components/BottomNav';
+import { searchSamplePlaces, suggestSampleQueries } from '../lib/placeSearch';
 
 interface Props {
   currentLanguage: SupportedLanguage;
   onNavigateTab: (tab: TouristTab) => void;
   onOpenPlace: (placeId: string) => void;
+  /** Opens the Map tab and searches OpenStreetMap there for `query`. */
+  onSearchMap: (query: string) => void;
   onOpenSOS: () => void;
   onOpenAI: () => void;
   announcements: OfficialAnnouncement[];
@@ -44,6 +47,7 @@ export const HomeScreen: React.FC<Props> = ({
   currentLanguage,
   onNavigateTab,
   onOpenPlace,
+  onSearchMap,
   onOpenSOS,
   onOpenAI,
   announcements,
@@ -74,20 +78,24 @@ export const HomeScreen: React.FC<Props> = ({
     { id: 'ai', label: 'Namo AI Assistant', icon: Sparkles, action: onOpenAI, color: 'bg-amber-100 text-amber-900 border-amber-300', badge: 'AI' },
   ];
 
-  // Filtered places if search query is entered
-  const filteredQuickPlaces = searchQuery.trim()
-    ? places.filter(p => 
-        p.name[currentLanguage]?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.name.en.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.location.area.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : [];
+  // Sample places matching what is typed (same rules as Explore and the map).
+  // Nothing here touches the network; the map search runs only on request.
+  const query = searchQuery.trim();
+  const filteredQuickPlaces = useMemo(() => (query ? searchSamplePlaces(places, query) : []), [places, query]);
+  const suggestions = useMemo(
+    () => (query && filteredQuickPlaces.length === 0 ? suggestSampleQueries(places, query) : []),
+    [places, query, filteredQuickPlaces],
+  );
 
   return (
     <div id="home-screen-view" className="space-y-5 pb-10">
       {/* Hero Greeting & Destination Card */}
-      <section className="bg-gradient-to-br from-stone-900 via-stone-850 to-orange-950 text-stone-100 rounded-3xl p-5 sm:p-7 shadow-lg border border-stone-800 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-orange-600/10 rounded-full blur-3xl pointer-events-none" />
+      {/* Only the glow is clipped: an overflow-hidden card cut the search
+          results below to a 23px sliver. */}
+      <section className="bg-gradient-to-br from-stone-900 via-stone-850 to-orange-950 text-stone-100 rounded-3xl p-5 sm:p-7 shadow-lg border border-stone-800 relative">
+        <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none" aria-hidden="true">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-orange-600/10 rounded-full blur-3xl" />
+        </div>
         <div className="relative z-10 space-y-3">
           <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-orange-500/20 text-orange-300 border border-orange-500/30 text-xs font-semibold">
             <span className="w-2 h-2 rounded-full bg-orange-400 animate-ping" />
@@ -137,10 +145,28 @@ export const HomeScreen: React.FC<Props> = ({
             </div>
 
             {/* Quick search dropdown results */}
-            {searchQuery.trim() && (
-              <div className="absolute top-full left-0 right-0 mt-1.5 bg-white text-stone-900 rounded-xl shadow-xl border border-stone-200 max-h-60 overflow-y-auto z-30 p-2 space-y-1">
+            {query && (
+              <div id="home-search-results" className="absolute top-full left-0 right-0 mt-1.5 bg-white text-stone-900 rounded-xl shadow-xl border border-stone-200 max-h-60 overflow-y-auto z-30 p-2 space-y-1">
                 {filteredQuickPlaces.length === 0 ? (
-                  <p className="text-xs text-stone-500 p-2">No matching temples, ghats, or facilities found.</p>
+                  <div role="status" className="p-2 space-y-1.5 text-xs">
+                    <p className="text-stone-500">{t.searchNoMatches}</p>
+                    {suggestions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-stone-600">
+                        <span>{t.searchDidYouMean}</span>
+                        {suggestions.map((suggestion) => (
+                          <button
+                            key={suggestion}
+                            type="button"
+                            onClick={() => setSearchQuery(suggestion)}
+                            className="min-h-12 rounded-lg bg-orange-50 px-2.5 font-semibold text-orange-800 hover:bg-orange-100 transition"
+                          >
+                            {suggestion}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[11px] text-stone-500">{t.searchTips}</p>
+                  </div>
                 ) : (
                   filteredQuickPlaces.map((pl) => (
                     <button
@@ -158,6 +184,18 @@ export const HomeScreen: React.FC<Props> = ({
                       <ChevronRight className="w-4 h-4 text-stone-400" />
                     </button>
                   ))
+                )}
+                {/* Only the sample list is searched above; real places are on the map. */}
+                {query.length >= 2 && (
+                  <button
+                    id="home-search-on-map"
+                    type="button"
+                    onClick={() => onSearchMap(query)}
+                    className="sticky bottom-0 w-full min-h-12 flex items-center gap-2 rounded-lg border-t border-stone-100 bg-white px-2 text-left text-xs font-semibold text-orange-800 hover:bg-orange-50 transition"
+                  >
+                    <Map className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{t.searchOnMap} “{query}”</span>
+                  </button>
                 )}
               </div>
             )}

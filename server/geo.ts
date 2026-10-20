@@ -31,6 +31,7 @@ import {
   SERVICE_AREA,
 } from '../src/lib/geo';
 import { TripCandidate, TripCandidatesResponse, TripPlaceCategory, TripPlaceDetails } from '../src/lib/itinerary';
+import { alternativeSearchQuery } from '../src/lib/placeSearch';
 
 /** An error with the HTTP status and stable code the route should answer with. */
 export class GeoServiceError extends Error {
@@ -720,9 +721,50 @@ export function normaliseSearchQuery(query: string): string {
   return query.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+/** One Nominatim search inside the service area, through the shared queue and back-off. */
+async function queryNominatim(q: string, language: 'en' | 'hi' | 'mr'): Promise<GeoSearchResult[]> {
+  const base = `${nominatimBaseUrl()}/search`;
+  const blocked = secondsBlocked(base);
+  if (blocked > 0) throw busyError('The place search service', blocked);
+
+  const params = new URLSearchParams({
+    q,
+    format: 'jsonv2',
+    limit: '8',
+    countrycodes: 'in',
+    viewbox: `${SERVICE_AREA.west},${SERVICE_AREA.north},${SERVICE_AREA.east},${SERVICE_AREA.south}`,
+    bounded: '1',
+    'accept-language': language,
+  });
+  const body = await nominatimGate(() =>
+    fetchUpstreamJson(`${base}?${params.toString()}`, { method: 'GET' }, 10_000, 'The place search service'),
+  );
+  return parseNominatimResults(body);
+}
+
+const searchResponse = (results: GeoSearchResult[], alternativeQuery: string | null): GeoSearchResponse => ({
+  results,
+  alternativeQuery,
+  source: 'OPENSTREETMAP_NOMINATIM',
+  attribution: OSM_ATTRIBUTION,
+});
+
+function rememberSearch(key: string, response: GeoSearchResponse): GeoSearchResponse {
+  searchCache.set(key, response);
+  return response;
+}
+
 /**
  * Searches Nominatim, limited to the service area. Called only when the user
  * submits a search: the Nominatim policy forbids search-as-you-type.
+ *
+ * When the words as typed find nothing, at most one alternative spelling is
+ * tried (`alternativeSearchQuery`, e.g. "Kalaram Temple" → "Kalaram Mandir").
+ * It waits its turn in the same queue, so it starts at least 1.1 s after the
+ * first call and never alongside it, and a cached answer for it is used
+ * instead of a call. It is never tried after an error: a timeout, a busy or
+ * failed reply or a back-off fails the search as before. If the alternative
+ * itself fails, the search answers "nothing found" without caching it.
  */
 export async function searchPlaces(query: string, language: 'en' | 'hi' | 'mr'): Promise<GeoSearchResponse> {
   const q = normaliseSearchQuery(query);
@@ -733,30 +775,28 @@ export async function searchPlaces(query: string, language: 'en' | 'hi' | 'mr'):
   const pending = searchInFlight.get(key);
   if (pending) return pending;
 
-  const base = `${nominatimBaseUrl()}/search`;
-  const params = new URLSearchParams({
-    q,
-    format: 'jsonv2',
-    limit: '8',
-    countrycodes: 'in',
-    viewbox: `${SERVICE_AREA.west},${SERVICE_AREA.north},${SERVICE_AREA.east},${SERVICE_AREA.south}`,
-    bounded: '1',
-    'accept-language': language,
-  });
-
   const request = (async () => {
-    const blocked = secondsBlocked(base);
-    if (blocked > 0) throw busyError('The place search service', blocked);
-    const body = await nominatimGate(() =>
-      fetchUpstreamJson(`${base}?${params.toString()}`, { method: 'GET' }, 10_000, 'The place search service'),
-    );
-    const result: GeoSearchResponse = {
-      results: parseNominatimResults(body),
-      source: 'OPENSTREETMAP_NOMINATIM',
-      attribution: OSM_ATTRIBUTION,
-    };
-    searchCache.set(key, result);
-    return result;
+    const results = await queryNominatim(q, language);
+    if (results.length > 0) return rememberSearch(key, searchResponse(results, null));
+
+    const alternative = alternativeSearchQuery(q);
+    const altQ = alternative === null ? null : normaliseSearchQuery(alternative);
+    if (alternative === null || altQ === null || altQ === q) return rememberSearch(key, searchResponse([], null));
+
+    // Only the cache is shared here, not another search in flight: two
+    // searches that are each other's alternative would wait on each other.
+    const altKey = `${language}|${altQ}`;
+    let altResponse = searchCache.get(altKey);
+    if (!altResponse) {
+      try {
+        altResponse = rememberSearch(altKey, searchResponse(await queryNominatim(altQ, language), null));
+      } catch (err) {
+        if (!(err instanceof GeoServiceError)) throw err;
+        return searchResponse([], null);
+      }
+    }
+    const found = altResponse.results.length > 0;
+    return rememberSearch(key, searchResponse(altResponse.results, found ? altResponse.alternativeQuery ?? alternative : null));
   })().finally(() => searchInFlight.delete(key));
 
   searchInFlight.set(key, request);

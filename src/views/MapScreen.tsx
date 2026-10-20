@@ -41,11 +41,16 @@ import {
   livePlaceName,
 } from '../lib/geo';
 import { GeoRequestError, UserPosition, fetchNearbyPlaces, requestCurrentPosition, searchGeo } from '../lib/geoApi';
+import { searchSamplePlaces, suggestSampleQueries } from '../lib/placeSearch';
 
 interface Props {
   places: Place[];
   currentLanguage: SupportedLanguage;
   onSelectPlace: (placeId: string) => void;
+  /** "Search on map" from Home or Explore: searched once when the map opens. */
+  initialSearch?: { query: string } | null;
+  /** Called once `initialSearch` has been started, so it is not repeated. */
+  onInitialSearchHandled?: () => void;
 }
 
 /** Centre of the nearby search. Only `isUser` anchors came from the device's location. */
@@ -65,7 +70,16 @@ type SearchState =
   | { status: 'idle' }
   | { status: 'loading'; query: string; samples: Place[] }
   | { status: 'error'; query: string; message: string; samples: Place[] }
-  | { status: 'ready'; query: string; live: GeoSearchResult[]; samples: Place[] };
+  | {
+      status: 'ready';
+      query: string;
+      live: GeoSearchResult[];
+      samples: Place[];
+      /** The spelling the server searched instead, when the query itself found nothing. */
+      alternativeQuery: string | null;
+      /** Corrected spellings to offer when nothing at all matched. */
+      suggestions: string[];
+    };
 
 type Selection =
   | { type: 'live'; place: LivePlace }
@@ -96,7 +110,7 @@ const formatDate = (iso: string) =>
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPlace }) => {
+export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPlace, initialSearch, onInitialSearchHandled }) => {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [radiusM, setRadiusM] = useState<number>(DEFAULT_NEARBY_RADIUS_M);
   const [nearby, setNearby] = useState<NearbyState>({ status: 'idle' });
@@ -325,15 +339,11 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
     });
   };
 
-  const matchSamples = (query: string) => {
-    const q = query.toLowerCase();
-    return places.filter(p => [p.name.en, p.name.hi, p.name.mr, p.location.area].some(s => s?.toLowerCase().includes(q)));
-  };
-
-  // Runs only when the user submits. Nominatim's policy forbids search-as-you-type.
-  const runSearch = async (event?: React.FormEvent) => {
-    event?.preventDefault();
-    const query = searchText.trim();
+  // Runs only on a user action: submitting the form, choosing a suggestion, or
+  // "Search on map" from Home or Explore. Nominatim's policy forbids
+  // search-as-you-type.
+  const searchFor = async (text: string) => {
+    const query = text.trim();
     if (query.length < 2) {
       setSearch({ status: 'error', query, message: 'Type at least 2 characters to search.', samples: [] });
       return;
@@ -341,11 +351,19 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
     searchAbort.current?.abort();
     const controller = new AbortController();
     searchAbort.current = controller;
-    const samples = matchSamples(query);
+    const samples = searchSamplePlaces(places, query);
     setSearch({ status: 'loading', query, samples });
     try {
       const data = await searchGeo(query, currentLanguage, controller.signal);
-      if (searchAbort.current === controller) setSearch({ status: 'ready', query, live: data.results, samples });
+      if (searchAbort.current !== controller) return;
+      setSearch({
+        status: 'ready',
+        query,
+        live: data.results,
+        samples,
+        alternativeQuery: data.alternativeQuery ?? null,
+        suggestions: data.results.length === 0 && samples.length === 0 ? suggestSampleQueries(places, query) : [],
+      });
     } catch (err: any) {
       if (err?.name === 'AbortError' || searchAbort.current !== controller) return;
       setSearch({
@@ -356,6 +374,25 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
       });
     }
   };
+
+  const runSearch = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    void searchFor(searchText);
+  };
+
+  const searchSuggestion = (text: string) => {
+    setSearchText(text);
+    void searchFor(text);
+  };
+
+  // The search the user asked for on Home or Explore, run once.
+  useEffect(() => {
+    if (!initialSearch) return;
+    const query = initialSearch.query.trim().slice(0, 100);
+    setSearchText(query);
+    void searchFor(query);
+    onInitialSearchHandled?.();
+  }, [initialSearch]);
 
   const closeSearch = () => {
     searchAbort.current?.abort();
@@ -765,7 +802,7 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
                   {search.query.length >= 2 && (
                     <button
                       type="button"
-                      onClick={() => runSearch()}
+                      onClick={() => void searchFor(search.query)}
                       className="inline-flex min-h-12 items-center gap-1 rounded-xl px-2 font-semibold underline"
                     >
                       <RefreshCw className="h-3.5 w-3.5" /> Try again
@@ -774,9 +811,29 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
                 </div>
               )}
               {search.status === 'ready' && search.live.length === 0 && searchSamples.length === 0 && (
-                <p className="text-stone-600">
-                  No matches in the {SERVICE_AREA.name}. Try another spelling or a nearby landmark.
-                </p>
+                <div id="map-search-empty" className="space-y-1.5 text-stone-600">
+                  <p>No matches in the {SERVICE_AREA.name}.</p>
+                  {search.suggestions.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>Did you mean</span>
+                      {search.suggestions.map(suggestion => (
+                        <button
+                          key={suggestion}
+                          type="button"
+                          onClick={() => searchSuggestion(suggestion)}
+                          className="min-h-12 rounded-xl bg-orange-50 px-3 font-semibold text-orange-800 hover:bg-orange-100"
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    <li>Check the spelling, or try the local name, e.g. “Mandir” instead of “Temple”.</li>
+                    <li>Use the place’s name rather than a sentence: “Ramkund”, not “temple near Ramkund”.</li>
+                    <li>Or move the map to the area and tap “Search this area” to list places mapped there.</li>
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -805,6 +862,11 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
 
             {search.status === 'ready' && search.live.length > 0 && (
               <div>
+                {search.alternativeQuery && (
+                  <p id="map-search-alternative" className="px-1 pb-1 text-[11px] text-stone-600">
+                    OpenStreetMap had nothing for “{search.query}”, so these are its results for “{search.alternativeQuery}”.
+                  </p>
+                )}
                 <p className="px-1 text-[10px] font-bold uppercase tracking-wider text-stone-600">From OpenStreetMap</p>
                 <ul>
                   {search.live.map(r => (

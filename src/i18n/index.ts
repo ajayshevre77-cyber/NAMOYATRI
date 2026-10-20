@@ -18,7 +18,11 @@ export const translations = {
     destinationBadge: 'Simhastha Kumbh 2027',
     welcomeGreeting: 'Namaste, Pilgrim',
     greetingSubtitle: 'Plan, travel, and experience the sacred Kumbh with peace of mind.',
-    searchPlaceholder: 'Search temples, ghats, shuttles, facilities...',
+    searchPlaceholder: 'Search temples, ghats, facilities...',
+    searchNoMatches: 'No matching temples, ghats or facilities in the sample list.',
+    searchDidYouMean: 'Did you mean:',
+    searchTips: 'Check the spelling or try fewer words. The map also searches OpenStreetMap for real places.',
+    searchOnMap: 'Search the map for',
     
     // Nav
     navHome: 'Home',
@@ -126,7 +130,11 @@ export const translations = {
     destinationBadge: 'सिंहस्थ कुंभ २०२७',
     welcomeGreeting: 'नमस्ते, तीर्थयात्री',
     greetingSubtitle: 'पवित्र कुंभ यात्रा की योजना बनाएं, सुगम यात्रा करें और मन की शांति पाएं।',
-    searchPlaceholder: 'मंदिर, घाट, शटल, सुविधाएं खोजें...',
+    searchPlaceholder: 'मंदिर, घाट, सुविधाएं खोजें...',
+    searchNoMatches: 'नमूना सूची में कोई मिलता-जुलता मंदिर, घाट या सुविधा नहीं मिली।',
+    searchDidYouMean: 'क्या आपका मतलब है:',
+    searchTips: 'वर्तनी जाँचें या कम शब्दों में खोजें। मानचित्र OpenStreetMap पर असली स्थान भी खोजता है।',
+    searchOnMap: 'मानचित्र पर खोजें:',
     
     navHome: 'होम',
     navExplore: 'दर्शन',
@@ -225,7 +233,11 @@ export const translations = {
     destinationBadge: 'सिंहस्थ कुंभ २०२७',
     welcomeGreeting: 'नमस्कार, भाविक मित्र',
     greetingSubtitle: 'पवित्र कुंभमेळ्याचे नियोजन करा, सुरक्षित प्रवास करा आणि मनःशांती मिळवा.',
-    searchPlaceholder: 'मंदिरे, घाट, शटल बसेस, सोयीसुविधा शोधा...',
+    searchPlaceholder: 'मंदिरे, घाट, सोयीसुविधा शोधा...',
+    searchNoMatches: 'नमुना यादीत जुळणारे मंदिर, घाट किंवा सुविधा सापडली नाही.',
+    searchDidYouMean: 'तुम्हाला हे म्हणायचे आहे का:',
+    searchTips: 'शब्दलेखन तपासा किंवा कमी शब्दांत शोधा. नकाशा OpenStreetMap वरील खरी ठिकाणेही शोधतो.',
+    searchOnMap: 'नकाशावर शोधा:',
     
     navHome: 'मुख्य',
     navExplore: 'दर्शन',

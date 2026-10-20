@@ -4,6 +4,94 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-20 (Place search finds places more reliably)
+
+### What was wrong
+
+- **The Home search showed almost nothing.** Its results list was cut off by
+  the dark banner it sits in, so only a 23-pixel sliver was visible, even when
+  it had found something. This has been the case since the app was first
+  built.
+- **Home and Explore searched only the 8 sample places**, and only when the
+  whole phrase matched exactly. "Kalaram Mandir", "Ram Kund", "Trimbakeshwar
+  Temple", "hospital" and Hindi or Marathi spellings in the English app all
+  found nothing.
+- **The map search used the spelling exactly as typed.** OpenStreetMap writes
+  "Kushawart", "Kalaram Mandir" and "Trimbakeshwar Temple", so "Kushavarta",
+  "Kalaram Temple" and "Trimbakeshwar Jyotirlinga" found nothing.
+- The three search boxes all matched differently, and "nothing found" gave
+  little help.
+
+### What's new
+
+- **One way of matching for Home, Explore and the map's sample sites.** It
+  understands:
+  - words in any order, and joined or split words ("Ramkund" = "Ram Kund");
+  - Mandir = Temple, Tryambak = Trimbak, Kushavarta = Kushavart = Kushawart,
+    Nasik = Nashik, and similar spelling differences;
+  - Hindi and Marathi names, whatever language the app is in (for example
+    रामकुंड, काळाराम मंदिर or कालाराम मंदिर, त्र्यम्बकेश्वर);
+  - category words such as "hospital", "parking" or "temples";
+  - the start of a word while typing ("Kush").
+
+  It does not guess wildly: "pizza", "airport" or "Mumbai" find nothing.
+- **"Did you mean"** offers a corrected spelling when nothing matches, such as
+  "Kushvarta" → Kushavarta, and only when the correction finds something.
+- **"Search the map for …"** on Home (always) and on Explore (when nothing
+  is found) opens the Map tab and searches OpenStreetMap there. It searches
+  only when you tap it, never while you type.
+- **The map tries one other spelling** when OpenStreetMap finds nothing, and
+  says so: "OpenStreetMap had nothing for 'Kalaram Temple', so these are its
+  results for 'Kalaram Mandir'."
+  - It tries at most one, after the first search, and never at the same time.
+  - It never retries when the service is busy, slow or failing.
+  - It does not retry for places OpenStreetMap does not have (Sadhu Gram,
+    Muktidham).
+- **A more helpful "no matches" message on the map**, with tips: check the
+  spelling, try "Mandir" instead of "Temple", use the place's name rather
+  than a sentence, or use "Search this area".
+- The Home search box no longer offers to search "shuttles", which it never
+  could.
+
+The list of extra spellings (in `src/lib/placeSearch.ts`) only adds ways of
+writing places that already exist. It adds no places, locations, hours or
+ratings.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. `git diff --check`:
+  clean. All seven test suites pass:
+  - security **17/17**, rides **14/14**, SOS hold **9/9**, routing **16/16**,
+    trip planner **17/17**;
+  - map **23/23** (7 new tests for the second spelling, using a stand-in for
+    OpenStreetMap);
+  - the new place-search tests **15/15**. They also show that the old Home and
+    Explore rules found none of the problem searches.
+- Five deliberate bugs were added one at a time, and the tests caught every
+  one:
+  - Mandir no longer counted as Temple;
+  - "Kushavarta" no longer counted as "Kushavart";
+  - a match anywhere inside a word was allowed;
+  - a second spelling was tried after the service had failed;
+  - a second spelling was tried even when the first search found something.
+- **Against the real OpenStreetMap search**, on 2026-10-20, four searches
+  that found nothing before now find the right place through one other
+  spelling:
+  - Kalaram Temple → Kalaram Mandir;
+  - Kushavarta → Kushawart Tirth;
+  - Trimbakeshwar Jyotirlinga → Trimbakeshwar Temple;
+  - रामकुंड → Ram Kund.
+- **In the browser**, on a test copy of the app with a stand-in OpenStreetMap
+  search:
+  - Home results show in full, with "Did you mean" and "Search the map".
+  - "Search the map" made one search, not two.
+  - A suggestion, the second-spelling note, and the "no matches" tips work.
+  - Explore works in English and with Hindi spellings.
+  - Phone widths of 320 and 360 px, in English and Marathi, have no sideways
+    scrolling.
+
+---
+
 ## 2026-10-14 (Phase 2C: AI trip planner)
 
 ### What's new

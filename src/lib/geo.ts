@@ -150,6 +150,12 @@ export interface GeoSearchResult {
 
 export interface GeoSearchResponse {
   results: GeoSearchResult[];
+  /**
+   * Set when the words searched for found nothing and these results came from
+   * the one alternative spelling the server tried instead (e.g. "Kalaram
+   * Mandir" for "Kalaram Temple"); null otherwise.
+   */
+  alternativeQuery: string | null;
   source: 'OPENSTREETMAP_NOMINATIM';
   attribution: string;
 }

@@ -71,6 +71,12 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [savedPlaceIds, setSavedPlaceIds] = useState<string[]>([]);
   const [isNamoAIOpen, setIsNamoAIOpen] = useState(false);
+  // "Search on map" from Home or Explore: the Map tab runs this search once.
+  const [mapSearch, setMapSearch] = useState<{ query: string } | null>(null);
+  const searchOnMap = (query: string) => {
+    setMapSearch({ query });
+    setActiveTab('map');
+  };
 
   // Sync role if updated in profile
   useEffect(() => {
@@ -211,6 +217,7 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                 currentLanguage={currentLanguage}
                 onNavigateTab={setActiveTab}
                 onOpenPlace={(id) => setSelectedPlaceId(id)}
+                onSearchMap={searchOnMap}
                 onOpenSOS={() => setActiveTab('safety')}
                 onOpenAI={() => setIsNamoAIOpen(true)}
                 announcements={announcements}
@@ -224,6 +231,7 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                 places={places}
                 currentLanguage={currentLanguage}
                 onSelectPlace={(id) => setSelectedPlaceId(id)}
+                onSearchMap={searchOnMap}
               />
             )}
 
@@ -233,6 +241,8 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                   places={places}
                   currentLanguage={currentLanguage}
                   onSelectPlace={(id) => setSelectedPlaceId(id)}
+                  initialSearch={mapSearch}
+                  onInitialSearchHandled={() => setMapSearch(null)}
                 />
               </Suspense>
             )}

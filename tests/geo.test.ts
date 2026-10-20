@@ -4,7 +4,9 @@ import {
   classifyOsmTags,
   parseOverpassElements,
   resetGeoStateForTests,
+  searchPlaces,
   setGeoFetchForTests,
+  GeoServiceError,
   MAX_PLACES_PER_CATEGORY,
 } from '../server/geo';
 import {
@@ -22,7 +24,8 @@ process.env.NODE_ENV = 'test';
 //
 // No real OpenStreetMap service is called: every upstream request goes to the
 // stub below. /api/geo/* has a limiter of 30 requests per minute per IP and
-// this suite makes 21; keep it under 30 when adding scenarios.
+// this suite makes 22; keep it under 30 when adding scenarios. Scenarios
+// 18–23 call searchPlaces directly, so they do not count.
 
 process.env.OVERPASS_API_URLS = 'https://overpass-primary.test/api/interpreter,https://overpass-fallback.test/api/interpreter';
 process.env.NOMINATIM_API_URL = 'https://nominatim.test';
@@ -57,6 +60,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 const overpassQueryOf = (call: UpstreamCall) => new URLSearchParams(String(call.init.body)).get('data') ?? '';
+const searchQueryOf = (call: UpstreamCall) => new URL(call.url).searchParams.get('q');
 const headerOf = (call: UpstreamCall, name: string) => (call.init.headers as Record<string, string>)?.[name];
 
 // A precise point by Ramkund. It rounds to 20.006, 73.792.
@@ -83,7 +87,7 @@ const OVERPASS_BODY = {
 
 async function runGeoTestSuite() {
   console.log('=================================================================');
-  console.log('NAMO YATRI MAP & NEARBY PLACES TEST SUITE (16 SCENARIOS)');
+  console.log('NAMO YATRI MAP & NEARBY PLACES TEST SUITE (23 SCENARIOS)');
   console.log('=================================================================\n');
 
   const server = http.createServer(app);
@@ -346,6 +350,122 @@ async function runGeoTestSuite() {
       await Promise.all([getSearch({ q: 'Tapovan' }), getSearch({ q: 'Panchavati' })]);
       const gap = calls.length === 2 ? Math.abs(calls[1].at - calls[0].at) : -1;
       return { success: gap >= 1000, details: `gap between upstream calls: ${gap} ms` };
+    });
+
+    // -------------------------------------------------------------
+    // Search: one alternative spelling when nothing is found
+    // -------------------------------------------------------------
+    const KALARAM = {
+      place_id: 7, osm_type: 'node', osm_id: 77, lat: '20.0089', lon: '73.7942',
+      name: 'Kalaram Mandir', display_name: 'Kalaram Mandir, Panchavati, Nashik', type: 'place_of_worship',
+    };
+    /** Only "kalaram mandir" finds anything, as on the live service (2026-10-20). */
+    const onlyKalaramMandir = (url: string) => json(searchQueryOf({ url, init: {}, at: 0 }) === 'kalaram mandir' ? [KALARAM] : []);
+    const codeOf = async (run: () => Promise<unknown>) => {
+      try {
+        await run();
+        return 'NO_ERROR';
+      } catch (err) {
+        return err instanceof GeoServiceError ? err.code : `UNEXPECTED ${(err as Error)?.message}`;
+      }
+    };
+
+    await assertTest(17, 'Search: when the words typed find nothing, one alternative spelling is tried, queued after the first and labelled', async () => {
+      resetUpstream(onlyKalaramMandir);
+      const { status, body } = await getSearch({ q: 'Kalaram Temple' });
+      const queries = calls.map(searchQueryOf);
+      const gap = calls.length === 2 ? calls[1].at - calls[0].at : -1;
+      const second = new URL(calls[1]?.url ?? 'https://invalid.test');
+      const ok =
+        status === 200 &&
+        body.results.length === 1 && body.results[0].name === 'Kalaram Mandir' &&
+        body.alternativeQuery === 'Kalaram Mandir' &&
+        queries.join('|') === 'kalaram temple|kalaram mandir' &&
+        gap >= 1000 &&
+        second.searchParams.get('bounded') === '1' && second.searchParams.get('accept-language') === 'en';
+      return { success: ok, details: `Status ${status}, upstream q: ${queries.join(' then ')}, gap ${gap} ms, alternativeQuery "${body.alternativeQuery}"` };
+    });
+
+    await assertTest(18, 'Search: both spellings are cached afterwards, so neither calls Nominatim again', async () => {
+      calls = [];
+      const again = await searchPlaces('kalaram temple', 'en');
+      const direct = await searchPlaces('Kalaram Mandir', 'en');
+      const ok =
+        calls.length === 0 &&
+        again.alternativeQuery === 'Kalaram Mandir' && again.results.length === 1 &&
+        direct.alternativeQuery === null && direct.results.length === 1;
+      return { success: ok, details: `upstream calls: ${calls.length}; repeat says "${again.alternativeQuery}", the OSM spelling says ${direct.alternativeQuery}` };
+    });
+
+    await assertTest(19, 'Search: no second call when the first finds something, for a query with no known spelling, or a place OpenStreetMap does not have', async () => {
+      // "Ramkund" has a known alternative ("Ram Kund"), so only the results stop a second call.
+      resetUpstream(() => json([{ ...KALARAM, osm_id: 78, name: 'Ramkund', display_name: 'Ramkund, Panchavati, Nashik', type: 'locality' }]));
+      const found = await searchPlaces('Ramkund', 'en');
+      const foundCalls = calls.length;
+      resetUpstream(() => json([]));
+      const unknown = await searchPlaces('pizza corner', 'en');
+      const unknownCalls = calls.length;
+      resetUpstream(() => json([]));
+      const sadhuGram = await searchPlaces('Sadhu Gram', 'en');
+      const ok =
+        foundCalls === 1 && found.results.length === 1 && found.alternativeQuery === null &&
+        unknownCalls === 1 && unknown.results.length === 0 && unknown.alternativeQuery === null &&
+        calls.length === 1 && sadhuGram.results.length === 0 && sadhuGram.alternativeQuery === null;
+      return { success: ok, details: `"Ramkund" (found): ${foundCalls} call, "pizza corner": ${unknownCalls} call, "Sadhu Gram": ${calls.length} call` };
+    });
+
+    await assertTest(20, 'Search: when the alternative finds nothing too, the answer is empty after exactly two calls, and cached', async () => {
+      resetUpstream(() => json([]));
+      const first = await searchPlaces('Kushavarta', 'en');
+      const queries = calls.map(searchQueryOf);
+      calls = [];
+      await searchPlaces('kushavarta', 'en');
+      const ok =
+        queries.join('|') === 'kushavarta|kushawart' &&
+        first.results.length === 0 && first.alternativeQuery === null &&
+        calls.length === 0;
+      return { success: ok, details: `upstream q: ${queries.join(' then ')}; repeat made ${calls.length} calls` };
+    });
+
+    await assertTest(21, 'Search: no alternative is tried after a failure (busy, rate limit, overload, timeout, server error, bad reply)', async () => {
+      const failures: [string, () => Response][] = [
+        ['GEO_UPSTREAM_BUSY', () => new Response('busy', { status: 503 })],
+        ['GEO_UPSTREAM_BUSY', () => new Response('slow down', { status: 429 })],
+        ['GEO_UPSTREAM_BUSY', () => new Response('gateway timeout', { status: 504 })],
+        ['GEO_UPSTREAM_TIMEOUT', () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); }],
+        ['GEO_UPSTREAM_FAILED', () => new Response('oops', { status: 500 })],
+        ['GEO_UPSTREAM_BAD_RESPONSE', () => new Response('<html>not json</html>', { status: 200 })],
+      ];
+      const wrong: string[] = [];
+      for (const [expected, reply] of failures) {
+        resetUpstream(reply);
+        const code = await codeOf(() => searchPlaces('Kalaram Temple', 'en'));
+        if (code !== expected || calls.length !== 1) wrong.push(`${expected}: got ${code} after ${calls.length} calls`);
+      }
+      return { success: wrong.length === 0, details: wrong.length === 0 ? `${failures.length} failures, each after exactly 1 call` : wrong.join('; ') };
+    });
+
+    await assertTest(22, 'Search: if the alternative itself is refused, the answer is empty and not cached, and the 30 s back-off holds', async () => {
+      resetUpstream(url => (searchQueryOf({ url, init: {}, at: 0 }) === 'kalaram mandir' ? new Response('slow down', { status: 429 }) : json([])));
+      const first = await searchPlaces('Kalaram Temple', 'en');
+      const firstCalls = calls.length;
+      calls = [];
+      const code = await codeOf(() => searchPlaces('Kalaram Temple', 'en'));
+      const ok =
+        first.results.length === 0 && first.alternativeQuery === null && firstCalls === 2 &&
+        code === 'GEO_UPSTREAM_BUSY' && calls.length === 0;
+      return { success: ok, details: `first: empty after ${firstCalls} calls; repeat: ${code} with ${calls.length} calls (not cached, still backing off)` };
+    });
+
+    await assertTest(23, 'Search: two searches that are each other’s alternative both finish, one Nominatim call at a time', async () => {
+      resetUpstream(() => json([]));
+      const both = Promise.all([searchPlaces('Sundarnarayan Temple', 'en'), searchPlaces('Sundarnarayan Mandir', 'en')]);
+      const timeout = new Promise<'TIMED_OUT'>(resolve => setTimeout(() => resolve('TIMED_OUT'), 15_000));
+      const outcome = await Promise.race([both, timeout]);
+      const times = calls.map(c => c.at).sort((a, b) => a - b);
+      const minGap = times.length > 1 ? Math.min(...times.slice(1).map((t, i) => t - times[i])) : -1;
+      const ok = outcome !== 'TIMED_OUT' && calls.length <= 4 && minGap >= 1000;
+      return { success: ok, details: `${outcome === 'TIMED_OUT' ? 'did not finish' : 'both finished'}, ${calls.length} calls, smallest gap ${minGap} ms` };
     });
   } finally {
     server.close();
