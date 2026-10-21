@@ -36,16 +36,19 @@ import {
   validateGeoSearchQuery,
   validateRouteRequestBody,
   validateItineraryRequestBody,
+  validateChatRequestBody,
   ValidNearbyQuery,
   ValidGeoSearch,
   ValidRouteRequest,
-  ValidItineraryRequest
+  ValidItineraryRequest,
+  ValidChatRequest
 } from './server/middleware/validation';
 import { estimateTrip } from './src/lib/fare';
 import { findNearbyPlaces, searchPlaces, GeoServiceError } from './server/geo';
 import { getRoutingStatus, planRoute } from './server/routing';
-import { GEMINI_MODEL, getGeminiClient, isGeminiConfigured } from './server/gemini';
+import { isGeminiConfigured } from './server/gemini';
 import { generateItinerary, getItineraryStatus } from './server/itinerary';
+import { answerChat } from './server/chat';
 import { recordAuditEvent, getAuditLogs } from './server/audit';
 import { assignUserRoleServerSide, resolveServerRoleAndStatus } from './server/firebaseAdmin';
 
@@ -65,6 +68,8 @@ app.use(secureCors);
 // they get a much smaller limit; the general parser then skips the parsed body.
 app.use('/api/geo/route', express.json({ limit: '4kb' }));
 app.use('/api/itinerary', express.json({ limit: '4kb' }));
+// A chat message plus 6 earlier ones of up to 1,000 characters (3 bytes each in Devanagari).
+app.use('/api/ai/chat', express.json({ limit: '32kb' }));
 app.use(express.json({ limit: '500kb' }));
 
 // -------------------------------------------------------------
@@ -72,7 +77,13 @@ app.use(express.json({ limit: '500kb' }));
 // -------------------------------------------------------------
 const publicLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 120, keyPrefix: 'pub' });
 const authLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 40, keyPrefix: 'auth' });
-const aiLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 20, keyPrefix: 'ai' });
+// Namo AI chat; server/chat.ts also caps Gemini calls per day and at once.
+const aiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 20,
+  keyPrefix: 'ai',
+  message: 'You are sending messages to Namo AI very quickly. Please wait a moment, then try again. In an emergency call 112.',
+});
 const bookingLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'bk' });
 const emergencyLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 60, keyPrefix: 'sos' });
 const adminLimiter = createRateLimiter({ windowMs: 60 * 1000, maxRequests: 60, keyPrefix: 'adm' });
@@ -575,86 +586,19 @@ app.get('/api/businesses', publicLimiter, (req: Request, res: Response) => {
   res.json({ businesses: MOCK_BUSINESSES });
 });
 
-// Namo AI Assistant Endpoint
-app.post('/api/ai/chat', aiLimiter, async (req: Request, res: Response) => {
-  const { query, language = 'en' } = req.body;
-
-  if (!query || typeof query !== 'string' || query.length > 500) {
-    res.status(400).json({ error: 'Valid query string up to 500 characters is required' });
-    return;
+// Namo AI chat (server/chat.ts): fixed safety guidance for emergencies first,
+// then Gemini with the conversation so far, else a labelled built-in answer.
+// Nothing is stored and nobody is contacted.
+app.post('/api/ai/chat', aiLimiter, validateChatRequestBody, async (req: Request, res: Response) => {
+  try {
+    res.json(await answerChat(res.locals.chatRequest as ValidChatRequest));
+  } catch (err) {
+    console.error('[Namo Yatri] CHAT_FAILED:', err);
+    res.status(500).json({
+      error: 'Namo AI could not answer because of an unexpected error. Please try again. In an emergency call 112.',
+      code: 'CHAT_FAILED',
+    });
   }
-
-  const ai = getGeminiClient();
-
-  if (ai) {
-    try {
-      const systemInstruction = `You are Namo AI, the digital guide in Namo Yatri, a demo app for pilgrims attending the Nashik–Trimbakeshwar Simhastha Kumbh 2027 in Maharashtra, India. Namo Yatri is not an official government service; never claim that your information is officially verified.
-Always be respectful, calm, helpful, and culturally mindful.
-Language mode: ${language === 'hi' ? 'Hindi' : language === 'mr' ? 'Marathi' : 'English'}.
-Guidelines:
-1. Provide accurate pilgrimage guidance for Nashik (Ramkund, Panchavati, Kalaram Mandir, Tapovan, Sadhu Gram) and Trimbakeshwar (Jyotirlinga, Kushavarta Kund, Brahmagiri).
-2. For transport, explain that ride requests and mobility passes in this app are a demo: no vehicle is dispatched, no payment is taken, and fares are estimates, not official or regulated rates. Point users to official transport operators for real travel.
-3. For emergencies, tell users to call 112 (all emergencies) or 108 (ambulance) directly. The in-app SOS is a demo and does not reach emergency services.
-4. Always clarify that live real-time crowd advisories come from the District Disaster Management Authority (DDMA). Keep answers concise, clear, and actionable.`;
-
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Gemini API timeout')), 10000)
-      );
-
-      const generatePromise = ai.models.generateContent({
-        model: GEMINI_MODEL,
-        contents: query,
-        config: {
-          systemInstruction,
-          temperature: 0.3,
-        },
-      });
-
-      const response: any = await Promise.race([generatePromise, timeoutPromise]);
-
-      res.json({
-        reply: response.text || 'Namaste. I am here to assist your holy pilgrimage to Nashik–Trimbakeshwar Simhastha Kumbh 2027.',
-        source: GEMINI_MODEL,
-      });
-      return;
-    } catch (err: any) {
-      console.error('Gemini API query failed, falling back to structured knowledge base:', err);
-    }
-  }
-
-  // Built-in fallback answers, used when Gemini is not configured or fails.
-  const q = query.toLowerCase();
-  let reply = '';
-
-  if (q.includes('trimbakeshwar') || q.includes('त्र्यंबकेश्वर')) {
-    reply = language === 'hi'
-      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नासिक शहर से लगभग २८ किमी दूर है। बस और शटल सेवाओं के लिए आधिकारिक कुंभ सूचनाएँ देखें।'
-      : language === 'mr'
-      ? 'त्र्यंबकेश्वर ज्योतिर्लिंग नाशिक शहरापासून सुमारे २८ किमी अंतरावर आहे. बस व शटल सेवांसाठी अधिकृत कुंभ सूचना पहा.'
-      : 'Trimbakeshwar Jyotirlinga is about 28 km west of Nashik, at the foothills of Brahmagiri. Check official Kumbh announcements for bus and shuttle services.';
-  } else if (q.includes('ramkund') || q.includes('रामकुंड') || q.includes('snan') || q.includes('स्नान')) {
-    reply = language === 'hi'
-      ? 'रामकुंड पंचवटी में पवित्र गोदावरी तट पर स्थित मुख्य शाही स्नान स्थल है।'
-      : language === 'mr'
-      ? 'रामकुंड हे पंचवटी येथे पवित्र गोदावरी नदीकाठी वसलेले मुख्य शाही स्नान तीर्थ आहे.'
-      : 'Ramkund in Panchavati, on the banks of the Godavari, is the main holy bathing ghat of the Nashik Kumbh.';
-  } else {
-    reply = language === 'hi'
-      ? 'नमस्ते। मैं नमो एआई हूँ। सिंहस्थ कुंभ २०२७ के पवित्र स्थल, परिवहन अथवा स्वयंसेवक सहायता हेतु आप मुझसे पूछ सकते हैं।'
-      : language === 'mr'
-      ? 'नमस्कार. मी नमो एआय आहे. सिंहस्थ कुंभ २०२७ मधील मंदिरे, वाहतूक अथवा मदतीविषयी आपण विचारू शकता.'
-      : 'Namaste. I am Namo AI, your pilgrimage companion for Simhastha Kumbh 2027.';
-  }
-
-  // Always label a fallback, including when Gemini is configured but the call
-  // failed, so a canned answer is never mistaken for an AI one.
-  res.json({
-    reply,
-    source: 'built-in-answers',
-    note: isGeminiConfigured()
-      ? 'The AI service could not be reached, so this is a built-in answer, not an AI response.'
-      : 'AI is not configured on this server, so this is a built-in answer, not an AI response.',
-  });
 });
 
 // =============================================================

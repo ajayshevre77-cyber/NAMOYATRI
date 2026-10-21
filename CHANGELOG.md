@@ -4,6 +4,113 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-21 (Namo AI answers questions usefully and handles emergencies)
+
+### What was wrong
+
+- Without the AI service set up (which is the case today), Namo AI answered
+  almost every question with "Namaste. I am Namo AI…".
+  - That included **"I need an ambulance"** and **"My child is lost"**: no 112
+    or 108, no next steps.
+  - Three of its five suggested questions got that greeting, and one promised
+    a "24x7 medical emergency camp" that does not exist.
+- It forgot the conversation, so a follow-up such as "How do I get there?"
+  made no sense to it.
+- When the server refused a message, the window showed "Thank you for your
+  inquiry. Please consult the Kumbh Helpdesk", hiding the error.
+
+### What's new
+
+- **Emergencies are answered first, with fixed safety guidance**, in English,
+  Hindi and Marathi.
+  - Covered: ambulance and medical emergencies; a missing child or relative,
+    or being lost yourself; fire, a crowd surge, drowning or an attack; and
+    "help!" or "what do I do in an emergency?".
+  - It says to call **112**, or **108** for an ambulance, with a few clear next
+    steps and tap-to-call buttons.
+  - It says plainly that **Namo Yatri has not contacted anyone**. The AI is
+    never asked about an emergency, so it cannot change or delay this
+    guidance.
+- **Every question gets a relevant answer, or an honest "I don't know".**
+  Without the AI, built-in answers cover:
+  - travel between Nashik and Trimbakeshwar, and to other places;
+  - temples and ghats in the app's sample list (labelled as demo data);
+  - finding hospitals, toilets, water, parking and ATMs on the map;
+  - how ride requests, passes, volunteers, SOS and Lost & Found work in this
+    demo;
+  - the tentative Shahi Snan dates, accommodation, crowds and whether the app
+    is official.
+
+  Anything else gets "I don't have verified information about that", with
+  what Namo AI can help with and where to look instead.
+- **Follow-up questions work**: "How do I get there?" or "What are its
+  timings?" after asking about a place.
+- **Answers come in your language.** A question typed in Hindi or Marathi is
+  answered in that language, even if the app is set to English.
+- **Every answer says where it came from**: "AI answer (Gemini), may be
+  inaccurate, not verified", "Built-in answer from the app", or "Safety
+  guidance (not written by AI)".
+- **New suggested questions**, each with a real answer: getting to
+  Trimbakeshwar, temples near Ramkund, Kushavarta Kund, a Marathi-speaking
+  volunteer, a hospital or pharmacy, ride requests, and emergencies. They are
+  shown in the app's language.
+- **Clear errors.** When something fails, is too slow or is sent too fast, you
+  see what happened, a "Try again" button and the 112/108 reminder. You can
+  cancel a slow question. Escape closes the window.
+
+### Limits and safeguards
+
+- The AI is given the app's own facts, with demo data labelled as demo. It is
+  told never to make up places, facilities, opening times, prices,
+  timetables, announcements, bookings or phone numbers other than 112 and 108.
+- An AI reply that claims to have contacted someone, or to have booked
+  something, is never shown; the built-in answer is shown instead.
+- Each person can send 20 messages a minute. The server makes at most 1,000
+  AI calls a day for the chat, and at most 4 at once; beyond that, built-in
+  answers are given.
+- The AI must answer within 20 seconds, or it is cancelled. Each question
+  sends at most 6 earlier messages.
+- Nothing is stored, and nobody is contacted.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. `git diff --check`:
+  clean.
+- The new Namo AI tests pass **19/19**. They use a stand-in for Gemini and
+  never call the real one. They cover every suggested question in all three
+  languages, emergencies in English, Hindi and Marathi, follow-ups, AI
+  failures, slow answers, rate limits, the daily cap, bad requests, and that
+  the API key never appears in answers or logs.
+- Seven deliberate bugs were added one at a time, and the tests caught every
+  one:
+  - emergency guidance skipped when the AI is set up;
+  - Hindi "lost" words missing;
+  - earlier messages not sent to the AI;
+  - a slow AI call not cancelled;
+  - an AI reply claiming an action shown;
+  - no daily cap;
+  - follow-ups ignoring earlier messages.
+- The other suites still pass: security **17/17**, rides **14/14**, SOS hold
+  **9/9**, map **23/23**, place search **15/15**, routing **16/16**, trip
+  planner **17/17**.
+  - One trip-planner timing check (scenario 11) failed once in nine runs. It
+    measured 1,499 ms where at least 1,500 ms is required. That code was not
+    changed.
+- **In the browser**, on a test copy of the app with a stand-in AI:
+  - built-in answers and follow-ups;
+  - the emergency guidance with call buttons;
+  - a labelled AI answer, which received the 6 earlier messages;
+  - a slow AI (cancelled, built-in answer, "Try again");
+  - a failing AI, then "Try again" once it recovered;
+  - the "sending too fast" error;
+  - Cancel and Escape;
+  - Hindi screens, with a Marathi question answered in Marathi;
+  - a 360 px phone width with no sideways scrolling.
+- **Not checked:** real Gemini answers. There is no Gemini key on this
+  machine.
+
+---
+
 ## 2026-10-20 (Place search finds places more reliably)
 
 ### What was wrong

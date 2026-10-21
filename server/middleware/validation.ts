@@ -18,6 +18,14 @@ import {
   isTripInterest,
   isTripPace,
 } from '../../src/lib/itinerary';
+import {
+  ChatRequest,
+  ChatTurn,
+  MAX_CHAT_HISTORY,
+  MAX_CHAT_MESSAGE_LENGTH,
+  MAX_HISTORY_TEXT_LENGTH,
+  isChatLanguage,
+} from '../../src/lib/chat';
 
 // ID format validation
 export function isValidIdentifier(id: string): boolean {
@@ -439,5 +447,62 @@ export function validateItineraryRequestBody(req: Request, res: Response, next: 
 
   const itineraryRequest: ValidItineraryRequest = { days, start: validStart, interests, budget, pace, mode };
   res.locals.itineraryRequest = itineraryRequest;
+  next();
+}
+
+/** Validated chat request, left on `res.locals.chatRequest`. */
+export type ValidChatRequest = ChatRequest;
+
+/** Control characters other than line breaks and tabs are dropped from chat text. */
+const cleanChatText = (value: string) => value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
+
+/**
+ * Validator for POST /api/ai/chat: `{ message, language?, history? }`.
+ * `message` is 1–MAX_CHAT_MESSAGE_LENGTH characters (`query`, which the chat
+ * window sent before 2026-10-21, is accepted too). `history` is at most
+ * MAX_CHAT_HISTORY earlier turns, each `{ role: 'user' | 'assistant', text }`
+ * of up to MAX_HISTORY_TEXT_LENGTH characters.
+ */
+export function validateChatRequestBody(req: Request, res: Response, next: NextFunction): void {
+  const body = req.body;
+  const fail = (code: string, error: string) => {
+    res.status(400).json({ error, code });
+  };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    fail('INVALID_CHAT_REQUEST', 'Send a JSON object with your message.');
+    return;
+  }
+
+  const raw = body.message ?? body.query;
+  const message = typeof raw === 'string' ? cleanChatText(raw) : '';
+  if (!message || message.length > MAX_CHAT_MESSAGE_LENGTH) {
+    fail('INVALID_CHAT_MESSAGE', `Type a message of 1 to ${MAX_CHAT_MESSAGE_LENGTH} characters.`);
+    return;
+  }
+
+  const language = body.language ?? 'en';
+  if (!isChatLanguage(language)) {
+    fail('INVALID_LANGUAGE', 'language must be en, hi or mr.');
+    return;
+  }
+
+  const history = body.history ?? [];
+  const validTurn = (turn: any) =>
+    !!turn && typeof turn === 'object' && (turn.role === 'user' || turn.role === 'assistant') &&
+    typeof turn.text === 'string' && cleanChatText(turn.text).length > 0 && turn.text.length <= MAX_HISTORY_TEXT_LENGTH;
+  if (!Array.isArray(history) || history.length > MAX_CHAT_HISTORY || !history.every(validTurn)) {
+    fail(
+      'INVALID_CHAT_HISTORY',
+      `history must be at most ${MAX_CHAT_HISTORY} earlier messages, each with a role (user or assistant) and text of up to ${MAX_HISTORY_TEXT_LENGTH} characters.`,
+    );
+    return;
+  }
+
+  const chatRequest: ValidChatRequest = {
+    message,
+    language,
+    history: history.map((turn: ChatTurn) => ({ role: turn.role, text: cleanChatText(turn.text) })),
+  };
+  res.locals.chatRequest = chatRequest;
   next();
 }
