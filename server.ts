@@ -470,9 +470,16 @@ app.get('/api/itinerary/status', publicLimiter, (req: Request, res: Response) =>
 // it answers AI_NOT_CONFIGURED, never a canned plan.
 app.post('/api/itinerary/generate', itineraryLimiter, validateItineraryRequestBody, async (req: Request, res: Response) => {
   const request = res.locals.itineraryRequest as ValidItineraryRequest;
+  // The browser's Cancel, or leaving the page, closes the connection before
+  // the reply: stop the plan's remaining AI and routing calls.
+  const gone = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) gone.abort();
+  });
   try {
-    res.json(await generateItinerary(request));
+    res.json(await generateItinerary(request, gone.signal));
   } catch (err) {
+    if (gone.signal.aborted) return;
     sendGeoError(res, err, { error: 'The trip could not be planned because of an unexpected error. Please try again.', code: 'ITINERARY_FAILED' });
   }
 });

@@ -16,6 +16,10 @@
  * AI_NOT_CONFIGURED, without places NOT_ENOUGH_PLACES, and a day whose route
  * cannot be calculated has a status and no distance, time or line. Nothing
  * is stored: the plan lives only in the response.
+ *
+ * A plan nobody is waiting for any more (the browser cancelled or left)
+ * stops before its Gemini call and before each day's route. A place lookup
+ * already under way finishes, since it is shared and cached for others.
  */
 import { ThinkingLevel } from '@google/genai';
 import { GeoPoint, OSM_ATTRIBUTION, haversineKm, isInServiceArea, roundPoint } from '../src/lib/geo';
@@ -127,10 +131,19 @@ export function setItineraryModelForTests(impl: ModelFn | null): void {
 // State: back-off, concurrency, daily allowance, shared identical requests
 // ---------------------------------------------------------------------------
 
+/** A plan being made, shared by everyone who asked for the same trip at the same time. */
+interface SharedPlan {
+  key: string;
+  promise: Promise<ItineraryResponse>;
+  /** Stops the plan's remaining work once nobody waits for it. */
+  controller: AbortController;
+  waiters: number;
+}
+
 let aiBlockedUntil = 0;
 let activePlans = 0;
 let usage = { day: '', count: 0 };
-let plansInFlight = new Map<string, Promise<ItineraryResponse>>();
+let plansInFlight = new Map<string, SharedPlan>();
 
 export function resetItineraryStateForTests(): void {
   if (process.env.NODE_ENV !== 'test') throw new Error('resetItineraryStateForTests is only for tests');
@@ -158,6 +171,13 @@ const notConfiguredError = () =>
 
 const badReply = (detail: string) =>
   new GeoServiceError(502, 'AI_BAD_RESPONSE', `Namo AI's plan could not be used (${detail}). Please try again.`);
+
+/** Never reaches a browser: it is only thrown once the browser has gone. */
+const cancelledError = () => new GeoServiceError(499, 'ITINERARY_CANCELLED', 'Trip planning was cancelled.');
+
+function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) throw cancelledError();
+}
 
 const secondsUntilUtcMidnight = () => {
   const now = new Date();
@@ -493,21 +513,32 @@ function aiError(err: any, timedOut: boolean): GeoServiceError {
   return new GeoServiceError(502, 'AI_PROVIDER_FAILED', 'Namo AI could not plan the trip. Please try again.');
 }
 
-async function askModel(request: Omit<ModelRequest, 'signal'>): Promise<ModelReply> {
+/** Asks the model, giving up at the timeout or as soon as `cancel` fires (and aborting the call either way). */
+async function askModel(request: Omit<ModelRequest, 'signal'>, cancel: AbortSignal): Promise<ModelReply> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onCancel = () => {};
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
       reject(new DOMException('Gemini did not answer in time', 'TimeoutError'));
     }, AI_TIMEOUT_MS);
   });
+  const cancelled = new Promise<never>((_, reject) => {
+    onCancel = () => {
+      controller.abort();
+      reject(cancelledError());
+    };
+    cancel.addEventListener('abort', onCancel, { once: true });
+  });
   try {
-    return await Promise.race([callModel({ ...request, signal: controller.signal }), timeout]);
+    return await Promise.race([callModel({ ...request, signal: controller.signal }), timeout, cancelled]);
   } catch (err) {
+    if (cancel.aborted) throw cancelledError();
     throw aiError(err, controller.signal.aborted);
   } finally {
     clearTimeout(timer);
+    cancel.removeEventListener('abort', onCancel);
   }
 }
 
@@ -531,12 +562,14 @@ async function routeDays(
   days: { stops: ItineraryStop[] }[],
   start: GeoPoint | null,
   mode: TravelMode,
+  cancel: AbortSignal,
 ): Promise<{ configured: boolean; routes: DayRoute[] }> {
   const configured = getRoutingStatus().configured;
   const routes: DayRoute[] = [];
   let stoppedBy: GeoServiceError | null = null;
 
   for (const day of days) {
+    throwIfCancelled(cancel);
     const points = dayRoutePoints(start, day.stops);
     if (!configured) {
       routes.push(noRoute('not_configured', 'ROUTING_NOT_CONFIGURED', 'Route planning is not set up on this server, so no road distance or travel time is shown.'));
@@ -567,7 +600,7 @@ async function routeDays(
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-async function buildPlan(req: ValidItineraryRequest): Promise<ItineraryResponse> {
+async function buildPlan(req: ValidItineraryRequest, cancel: AbortSignal): Promise<ItineraryResponse> {
   const origin = originOf(req.start);
   const startPoint = req.start.type === 'point' ? roundRouteStop(req.start.point) : null;
   const warnings: string[] = [];
@@ -576,6 +609,7 @@ async function buildPlan(req: ValidItineraryRequest): Promise<ItineraryResponse>
   const areas = candidateAreas(req.start, req.mode);
   const found: TripCandidatesResponse[] = [];
   for (const [i, area] of areas.entries()) {
+    throwIfCancelled(cancel);
     try {
       found.push(await findTripCandidates(area.centre, area.radiusM));
     } catch (err) {
@@ -600,14 +634,18 @@ async function buildPlan(req: ValidItineraryRequest): Promise<ItineraryResponse>
   }
 
   // 2. The AI chooses and orders, from the candidates only.
+  throwIfCancelled(cancel);
   checkAiBlocked();
   checkAllowance();
   usage.count++;
-  const reply = await askModel({
-    systemInstruction: systemInstruction(req),
-    prompt: promptFor(req, candidates, origin),
-    schema: itinerarySchema(req.days, pace.maxStops, candidates.map(c => c.id)),
-  });
+  const reply = await askModel(
+    {
+      systemInstruction: systemInstruction(req),
+      prompt: promptFor(req, candidates, origin),
+      schema: itinerarySchema(req.days, pace.maxStops, candidates.map(c => c.id)),
+    },
+    cancel,
+  );
   if (reply.finishReason === 'MAX_TOKENS') throw badReply('the reply was cut off');
   const plan = parsePlanReply(reply.text, {
     days: req.days,
@@ -648,7 +686,7 @@ async function buildPlan(req: ValidItineraryRequest): Promise<ItineraryResponse>
   }));
 
   // 3. Real road routes for each day, in the AI's order.
-  const routing = await routeDays(days, startPoint, req.mode);
+  const routing = await routeDays(days, startPoint, req.mode, cancel);
 
   return {
     summary: plan.summary,
@@ -682,27 +720,62 @@ function requestKey(req: ValidItineraryRequest): string {
 }
 
 /**
+ * Waits for a shared plan until it is ready or `signal` fires. When the last
+ * waiter leaves, the plan is stopped and forgotten, so a later identical
+ * request starts a new one instead of joining a cancelled one.
+ */
+function waitForPlan(plan: SharedPlan, signal?: AbortSignal): Promise<ItineraryResponse> {
+  plan.waiters++;
+  if (!signal) return plan.promise;
+  return new Promise((resolve, reject) => {
+    const leave = () => {
+      plan.waiters--;
+      if (plan.waiters === 0) {
+        plan.controller.abort();
+        if (plansInFlight.get(plan.key) === plan) plansInFlight.delete(plan.key);
+      }
+      reject(cancelledError());
+    };
+    signal.addEventListener('abort', leave, { once: true });
+    plan.promise.then(
+      result => {
+        signal.removeEventListener('abort', leave);
+        resolve(result);
+      },
+      err => {
+        signal.removeEventListener('abort', leave);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
  * A day-by-day itinerary for a validated request. Throws GeoServiceError with
  * a stable code for every failure; never returns a plan that was not made
- * from real places by the AI.
+ * from real places by the AI. `signal` says the caller has gone (the browser
+ * closed the connection); the error it then gets is ITINERARY_CANCELLED.
  */
-export async function generateItinerary(req: ValidItineraryRequest): Promise<ItineraryResponse> {
+export async function generateItinerary(req: ValidItineraryRequest, signal?: AbortSignal): Promise<ItineraryResponse> {
   if (!isGeminiConfigured()) throw notConfiguredError();
   checkAiBlocked();
   checkAllowance();
+  if (signal?.aborted) throw cancelledError();
 
   const key = requestKey(req);
   const pending = plansInFlight.get(key);
-  if (pending) return pending;
+  if (pending) return waitForPlan(pending, signal);
 
   if (activePlans >= MAX_CONCURRENT_PLANS) {
     throw new GeoServiceError(503, 'ITINERARY_BUSY', 'Namo AI is planning other trips right now. Please try again in a few seconds.', 10);
   }
   activePlans++;
-  const plan = buildPlan(req).finally(() => {
+  const controller = new AbortController();
+  const plan: SharedPlan = { key, controller, waiters: 0, promise: undefined as unknown as Promise<ItineraryResponse> };
+  plan.promise = buildPlan(req, controller.signal).finally(() => {
     activePlans--;
-    plansInFlight.delete(key);
+    if (plansInFlight.get(key) === plan) plansInFlight.delete(key);
   });
   plansInFlight.set(key, plan);
-  return plan;
+  return waitForPlan(plan, signal);
 }

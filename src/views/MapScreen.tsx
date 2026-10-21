@@ -51,6 +51,10 @@ interface Props {
   initialSearch?: { query: string } | null;
   /** Called once `initialSearch` has been started, so it is not repeated. */
   onInitialSearchHandled?: () => void;
+  /** "Plan a trip" from Home: scroll to the trip planner and focus it when the map opens. */
+  openTripPlanner?: boolean;
+  /** Called once the trip planner has been brought into view, so it is not repeated. */
+  onTripPlannerOpened?: () => void;
 }
 
 /** Centre of the nearby search. Only `isUser` anchors came from the device's location. */
@@ -110,7 +114,15 @@ const formatDate = (iso: string) =>
 const prefersReducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPlace, initialSearch, onInitialSearchHandled }) => {
+export const MapScreen: React.FC<Props> = ({
+  places,
+  currentLanguage,
+  onSelectPlace,
+  initialSearch,
+  onInitialSearchHandled,
+  openTripPlanner,
+  onTripPlannerOpened,
+}) => {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [radiusM, setRadiusM] = useState<number>(DEFAULT_NEARBY_RADIUS_M);
   const [nearby, setNearby] = useState<NearbyState>({ status: 'idle' });
@@ -393,6 +405,26 @@ export const MapScreen: React.FC<Props> = ({ places, currentLanguage, onSelectPl
     void searchFor(query);
     onInitialSearchHandled?.();
   }, [initialSearch]);
+
+  // "Plan a trip" on Home: bring the planner into view and move focus to its
+  // heading, so keyboard and screen-reader users land there too. It waits
+  // until the route and trip planners know whether they are set up (or
+  // 1.5 s), because their "not set up" notices change the height above it.
+  const [tripScrollDue, setTripScrollDue] = useState(false);
+  useEffect(() => {
+    if (!openTripPlanner) return;
+    const timer = setTimeout(() => setTripScrollDue(true), 1500);
+    return () => clearTimeout(timer);
+  }, [openTripPlanner]);
+  useEffect(() => {
+    if (!openTripPlanner) return;
+    const settled = planner.availability !== 'checking' && trip.availability !== 'checking';
+    if (!settled && !tripScrollDue) return;
+    document.getElementById('trip-planner')?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    document.getElementById('trip-heading')?.focus({ preventScroll: true });
+    setTripScrollDue(false);
+    onTripPlannerOpened?.();
+  }, [openTripPlanner, planner.availability, trip.availability, tripScrollDue]);
 
   const closeSearch = () => {
     searchAbort.current?.abort();

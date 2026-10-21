@@ -18,6 +18,8 @@ import {
 import { GeoPoint, OSM_COPYRIGHT_URL, SERVICE_AREA, formatDistance } from '../lib/geo';
 import { MIN_ROUTE_STOPS, RouteResponse, TRAVEL_MODES, TravelMode, formatDuration, routeKey } from '../lib/routing';
 import {
+  DayRouteState,
+  DayRouteView,
   ItineraryRequest,
   ItineraryResponse,
   ItineraryStop,
@@ -33,8 +35,10 @@ import {
   TripInterest,
   TripPace,
   dayRoutePoints,
+  dayRouteView,
   moveItem,
   removeItem,
+  withoutPendingRoute,
 } from '../lib/itinerary';
 import { GeoRequestError, UserPosition, fetchRoute } from '../lib/geoApi';
 import { fetchItineraryStatus, requestItinerary } from '../lib/itineraryApi';
@@ -54,12 +58,6 @@ export interface SelectedStartPlace {
   note?: string;
 }
 
-type DayRouteState =
-  | { status: 'none' }
-  | { status: 'ok'; key: string; data: RouteResponse }
-  | { status: 'loading'; key: string; slow: boolean }
-  | { status: 'error'; key: string; code: string; message: string; canRetry: boolean };
-
 interface DayState {
   day: number;
   title: string;
@@ -76,18 +74,10 @@ interface Trip {
   routingConfigured: boolean;
 }
 
-/** What a day's route section shows. Only `ok` has a distance, a time or a line. */
-export type DayRouteView =
-  | { kind: 'not_configured' }
-  | { kind: 'too_few_stops' }
-  | { kind: 'ok'; route: RouteResponse }
-  | { kind: 'loading'; slow: boolean }
-  | { kind: 'error'; code: string; message: string; canRetry: boolean }
-  | { kind: 'outdated' };
-
 type Generation =
   | { status: 'idle' }
   | { status: 'loading'; slow: boolean }
+  | { status: 'cancelled' }
   | { status: 'error'; code: string; message: string; canRetry: boolean };
 
 type Availability = 'checking' | 'configured' | 'not_configured' | 'unknown';
@@ -176,20 +166,11 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
   const pointsOf = (t: Trip, day: DayState) => dayRoutePoints(startPointOf(t), day.stops);
 
   /** The current route section for a day, given the stops and mode right now. */
-  const viewOf = (t: Trip, day: DayState, forMode: TravelMode = mode): DayRouteView => {
-    if (!t.routingConfigured) return { kind: 'not_configured' };
-    const points = pointsOf(t, day);
-    if (points.length < MIN_ROUTE_STOPS) return { kind: 'too_few_stops' };
-    const key = routeKey(forMode, points);
-    const s = day.route;
-    if (s.status !== 'none' && s.key === key) {
-      if (s.status === 'ok') return { kind: 'ok', route: s.data };
-      if (s.status === 'loading') return { kind: 'loading', slow: s.slow };
-      return { kind: 'error', code: s.code, message: s.message, canRetry: s.canRetry };
-    }
-    const hit = cache.current.get(key);
-    return hit ? { kind: 'ok', route: hit } : { kind: 'outdated' };
-  };
+  const viewOf = (t: Trip, day: DayState, forMode: TravelMode = mode): DayRouteView =>
+    dayRouteView(
+      { routingConfigured: t.routingConfigured, points: pointsOf(t, day), mode: forMode, state: day.route },
+      key => cache.current.get(key),
+    );
 
   const updateDay = (index: number, change: (day: DayState) => DayState) =>
     setTrip(t => (t ? { ...t, days: t.days.map((d, i) => (i === index ? change(d) : d)) } : t));
@@ -220,7 +201,7 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     const controller = new AbortController();
     generateAbort.current = controller;
     setGeneration({ status: 'loading', slow: false });
-    setAnnouncement('Planning your trip. This usually takes under a minute.');
+    setAnnouncement('Planning your trip. This can take up to two minutes.');
     const slowTimer = setTimeout(
       () => setGeneration(g => (g.status === 'loading' ? { status: 'loading', slow: true } : g)),
       60_000,
@@ -275,11 +256,13 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     }
   };
 
+  // Aborting closes the connection, which also stops the server's remaining
+  // AI and routing calls for this plan.
   const cancel = () => {
     generateAbort.current?.abort();
     generateAbort.current = null;
-    setGeneration({ status: 'idle' });
-    setAnnouncement('Trip planning cancelled.');
+    setGeneration({ status: 'cancelled' });
+    setAnnouncement('Trip planning cancelled. No itinerary was made.');
   };
 
   const clearTrip = () => {
@@ -366,7 +349,7 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     const target = stopIndex + delta;
     if (target < 0 || target >= day.stops.length) return;
     cancelRoute(index);
-    updateDay(index, d => ({ ...d, stops: moveItem(d.stops, stopIndex, delta) }));
+    updateDay(index, d => ({ ...d, stops: moveItem(d.stops, stopIndex, delta), route: withoutPendingRoute(d.route) }));
     setAnnouncement(`${stop.name} moved to position ${target + 1} of ${day.stops.length} on day ${day.day}. Update the route to see the new one.`);
   };
 
@@ -375,7 +358,7 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     const stop = day?.stops[stopIndex];
     if (!day || !stop) return;
     cancelRoute(index);
-    updateDay(index, d => ({ ...d, stops: removeItem(d.stops, stopIndex) }));
+    updateDay(index, d => ({ ...d, stops: removeItem(d.stops, stopIndex), route: withoutPendingRoute(d.route) }));
     setAnnouncement(`${stop.name} removed from day ${day.day}.`);
   };
 
@@ -488,7 +471,12 @@ export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocat
       className="scroll-mt-20 space-y-3 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm"
     >
       <div>
-        <h3 id="trip-heading" className="flex items-center gap-1.5 text-sm font-bold text-stone-900">
+        {/* Focusable so "Plan a trip" on Home can move focus here. */}
+        <h3
+          id="trip-heading"
+          tabIndex={-1}
+          className="flex items-center gap-1.5 rounded-md text-sm font-bold text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+        >
           <Sparkles className="h-4 w-4 text-orange-600" />
           Plan a trip with Namo AI
         </h3>
@@ -697,14 +685,24 @@ export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocat
         {generation.status === 'loading' && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-stone-50 p-2.5 text-stone-700">
             <span className="min-w-0 flex-1">
-              Finding real places, asking Namo AI to plan the days, then calculating road routes. This usually takes under a
-              minute.
-              {generation.slow && <span className="block text-stone-500">This is taking longer than usual.</span>}
+              Finding real places, asking Namo AI to plan the days, then calculating road routes. This can take up to two
+              minutes, mostly waiting for the free OpenStreetMap place service.
+              {generation.slow && (
+                <span className="block text-stone-500">
+                  Still working: the place service is slow right now. You can keep waiting or cancel.
+                </span>
+              )}
             </span>
             <button id="trip-cancel-btn" type="button" onClick={trip.cancel} className="inline-flex min-h-12 items-center rounded-xl px-2 font-semibold underline">
               Cancel
             </button>
           </div>
+        )}
+        {generation.status === 'cancelled' && (
+          <p id="trip-cancelled" className="rounded-xl bg-stone-50 p-2.5 text-stone-700">
+            You cancelled planning, so no itinerary was made.
+            {trip.trip && ' Your previous plan is still shown below.'}
+          </p>
         )}
         {generation.status === 'error' && (
           <div id="trip-error" className="space-y-1.5 rounded-xl border border-red-200 bg-red-50 p-2.5 text-red-900">
@@ -869,7 +867,7 @@ const TripDay: React.FC<{
         </button>
       </div>
 
-      <DayRouteLine view={view} dayNumber={day.day} />
+      {day.stops.length > 0 && <DayRouteLine view={view} dayNumber={day.day} />}
 
       <ol aria-label={`Stops on day ${day.day}, in order`} className="space-y-1.5">
         {start && (

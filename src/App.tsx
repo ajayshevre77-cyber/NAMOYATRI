@@ -77,6 +77,12 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
     setMapSearch({ query });
     setActiveTab('map');
   };
+  // "Plan a trip" on Home: the Map tab opens at its trip planner, once.
+  const [openTripPlanner, setOpenTripPlanner] = useState(false);
+  const planTrip = () => {
+    setOpenTripPlanner(true);
+    setActiveTab('map');
+  };
 
   // Sync role if updated in profile
   useEffect(() => {
@@ -218,6 +224,7 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                 onNavigateTab={setActiveTab}
                 onOpenPlace={(id) => setSelectedPlaceId(id)}
                 onSearchMap={searchOnMap}
+                onPlanTrip={planTrip}
                 onOpenSOS={() => setActiveTab('safety')}
                 onOpenAI={() => setIsNamoAIOpen(true)}
                 announcements={announcements}
@@ -243,6 +250,8 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                   onSelectPlace={(id) => setSelectedPlaceId(id)}
                   initialSearch={mapSearch}
                   onInitialSearchHandled={() => setMapSearch(null)}
+                  openTripPlanner={openTripPlanner}
+                  onTripPlannerOpened={() => setOpenTripPlanner(false)}
                 />
               </Suspense>
             )}

@@ -4,6 +4,94 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-21 (Trip planner: easy to find from Home, cancels cleanly, no stuck routes)
+
+The AI trip planner (1 to 7 days, e.g. a 3-day visit) already existed on the
+Map tab. This change makes it easy to find and fixes the problems found while
+checking it end to end. No new planner was built.
+
+### What was wrong
+
+- **Hard to find.** The planner sat near the bottom of the Map tab, below the
+  map and the route planner. Nothing on Home pointed to it.
+- **Cancel only hid the spinner.** The server carried on, still asking the AI
+  and calculating up to 7 routes for a plan nobody would see. That used up
+  the daily AI and routing allowances.
+- **A day could get stuck on "Calculating the road route…".** This happened if
+  you moved a stop while its route was loading, then moved it back. The
+  spinner never stopped and "Update route" never came back.
+- A day whose stops had all been removed also said "One place and no fixed
+  start", which made no sense.
+- The waiting message said "usually under a minute". Measured today, finding
+  places alone takes 20 to 60 seconds, because the free OpenStreetMap place
+  service is overloaded.
+
+### What's new
+
+- **A "Plan a trip" card on Home**, just below the welcome panel, in English,
+  Hindi and Marathi. Its button opens the Map tab with the planner already in
+  view and selected for keyboard and screen-reader users. In Hindi and
+  Marathi the card says the planner itself is only in English for now.
+- **Cancel really stops the work.** When you cancel, or leave the Map tab,
+  the server stops before asking the AI and before each remaining day's
+  route. If two tabs asked for the same trip at the same moment, one leaving
+  does not stop the other's. After cancelling you see "You cancelled
+  planning, so no itinerary was made", and any earlier plan stays on screen.
+- **Edited days never show stale routes.** After a stop is moved or removed,
+  the day shows only a route calculated for exactly those stops in that
+  order, or "Update route". It no longer shows an old line, an old distance,
+  an old error or a spinner that never ends.
+- **An honest waiting message:** "This can take up to two minutes, mostly
+  waiting for the free OpenStreetMap place service", and after a minute,
+  "Still working… You can keep waiting or cancel."
+
+Unchanged, and checked again: plans use only real OpenStreetMap places, the
+AI only chooses and orders them, road distances and times come only from the
+routing service, and with no routing service the plan shows its stops and
+says plainly that no road distance or time is available.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. `git diff --check`:
+  clean.
+- The trip-planner tests now pass **20/20** (3 new, and missing-field cases
+  added to the input check). They use stand-ins for Gemini, OpenStreetMap
+  and the routing service, never the real ones:
+  - a 3-day trip gives exactly 3 days, every stop is one of the real places
+    the AI was offered, none repeats, and each day's route starts at the
+    chosen starting point;
+  - missing days, interests, budget, pace, travel mode or start are refused;
+  - edited days never show stale routes, including the stuck-spinner case;
+  - cancelling before or during the place lookup, during the AI and during
+    routing, and a real browser-style disconnect over HTTP, all stop the
+    remaining AI and routing calls.
+- Ten deliberate bugs were added one at a time, and the tests caught every
+  one.
+- The other suites still pass: security **17/17**, rides **14/14**, SOS hold
+  **9/9**, map **23/23**, place search **15/15**, routing **16/16**, Namo AI
+  **19/19**.
+- **In the browser**, on a test copy of the app with a stand-in AI and a
+  stand-in routing service:
+  - Home → "Plan my trip" → a 3-day plan built from 89 real OpenStreetMap
+    places (fetched live today, then replayed), with Day 1 on the map;
+  - moving and removing stops, including the stuck-spinner case;
+  - the Google Maps link following the edited order;
+  - Cancel while places load and while the AI answers (the server log
+    confirmed it stopped);
+  - "routing not set up" with no distances or times;
+  - "AI not set up";
+  - the card at 320 and 360 px phone widths in English and Marathi, and in
+    Hindi on desktop.
+- **Live OpenStreetMap today:** the planner's place lookup took 20 s (walking,
+  Nashik), 36 s (driving), and timed out for the Trimbakeshwar area. In the
+  browser the first two attempts failed after about 50 s each. The app showed
+  a clear error with "Try again" and did not call the AI.
+- **Not checked:** real Gemini plans and real road routes. There is no Gemini
+  or OpenRouteService key on this machine, so the planner says "AI trip
+  planning is not set up" until a key is added.
+
+---
+
 ## 2026-10-21 (Namo AI answers questions usefully and handles emergencies)
 
 ### What was wrong

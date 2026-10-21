@@ -24,6 +24,12 @@ export const translations = {
     searchTips: 'Check the spelling or try fewer words. The map also searches OpenStreetMap for real places.',
     searchOnMap: 'Search the map for',
 
+    // "Plan a trip" card on Home (the planner itself is English only)
+    tripCardTitle: 'Plan a trip',
+    tripCardText: 'Staying 1 to 7 days? Namo AI suggests a day-by-day plan using real places from OpenStreetMap. You can reorder or remove any stop.',
+    tripCardButton: 'Plan my trip',
+    tripCardLanguageNote: '',
+
     // Namo AI chat
     aiSubtitle: 'Pilgrim guide (demo)',
     aiAdvisory: 'Answers may be inaccurate and are not officially verified. Check official Kumbh sources. In an emergency, call 112, or 108 for an ambulance.',
@@ -161,6 +167,12 @@ export const translations = {
     searchTips: 'वर्तनी जाँचें या कम शब्दों में खोजें। मानचित्र OpenStreetMap पर असली स्थान भी खोजता है।',
     searchOnMap: 'मानचित्र पर खोजें:',
 
+    // "Plan a trip" card on Home (the planner itself is English only)
+    tripCardTitle: 'यात्रा की योजना बनाएँ',
+    tripCardText: '1 से 7 दिन रुक रहे हैं? नमो एआई OpenStreetMap के असली स्थानों से दिन-ब-दिन योजना सुझाता है। आप किसी भी पड़ाव का क्रम बदल सकते हैं या उसे हटा सकते हैं।',
+    tripCardButton: 'मेरी यात्रा की योजना बनाएँ',
+    tripCardLanguageNote: 'यात्रा योजनाकार अभी केवल अंग्रेज़ी में है।',
+
     // Namo AI chat
     aiSubtitle: 'तीर्थयात्री मार्गदर्शक (डेमो)',
     aiAdvisory: 'उत्तर गलत हो सकते हैं और आधिकारिक रूप से सत्यापित नहीं हैं। आधिकारिक कुंभ स्रोत देखें। आपातकाल में 112 पर, या एम्बुलेंस के लिए 108 पर कॉल करें।',
@@ -288,6 +300,12 @@ export const translations = {
     searchDidYouMean: 'तुम्हाला हे म्हणायचे आहे का:',
     searchTips: 'शब्दलेखन तपासा किंवा कमी शब्दांत शोधा. नकाशा OpenStreetMap वरील खरी ठिकाणेही शोधतो.',
     searchOnMap: 'नकाशावर शोधा:',
+
+    // "Plan a trip" card on Home (the planner itself is English only)
+    tripCardTitle: 'सहलीचे नियोजन करा',
+    tripCardText: '1 ते 7 दिवस थांबणार आहात? नमो एआय OpenStreetMap वरील खऱ्या ठिकाणांमधून दिवसनिहाय योजना सुचवतो. तुम्ही कोणत्याही थांब्याचा क्रम बदलू शकता किंवा तो काढून टाकू शकता.',
+    tripCardButton: 'माझ्या सहलीचे नियोजन करा',
+    tripCardLanguageNote: 'सहल नियोजक सध्या फक्त इंग्रजीत आहे.',
 
     // Namo AI chat
     aiSubtitle: 'भाविक मार्गदर्शक (डेमो)',

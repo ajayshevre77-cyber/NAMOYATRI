@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import http from 'http';
 import app from '../server';
 import { GeoServiceError, classifyTripTags, parseTripCandidates, resetGeoStateForTests, setGeoFetchForTests } from '../server/geo';
@@ -16,8 +17,16 @@ import {
 } from '../server/itinerary';
 import { ValidItineraryRequest, validateItineraryRequestBody } from '../server/middleware/validation';
 import { GeoPoint } from '../src/lib/geo';
-import { TripCandidate, dayRoutePoints, moveItem, removeItem } from '../src/lib/itinerary';
-import { roundRouteStop, routeKey } from '../src/lib/routing';
+import {
+  DayRouteState,
+  TripCandidate,
+  dayRoutePoints,
+  dayRouteView,
+  moveItem,
+  removeItem,
+  withoutPendingRoute,
+} from '../src/lib/itinerary';
+import { RouteResponse, TravelMode, roundRouteStop, routeKey } from '../src/lib/routing';
 
 process.env.NODE_ENV = 'test';
 
@@ -26,9 +35,10 @@ process.env.NODE_ENV = 'test';
 //
 // No real service is called. Gemini, Overpass and OpenRouteService are all
 // stubs, and every key is a fake. /api/itinerary/generate allows 10 requests
-// per 10 minutes per IP: scenarios 4, 5, 6 and 16 make 4 through
-// postPlan(), and scenario 17 checks that the 11th is refused. Everything
-// else calls the server functions directly. Keep that budget in step.
+// per 10 minutes per IP: scenarios 4, 5, 6, 16, 17 and 19 make 6 (all
+// counted in planPosts), and scenario 20 checks that the 11th is refused, so
+// it must stay last. Everything else calls the server functions directly.
+// Keep that budget in step.
 
 const FAKE_GEMINI_KEY = 'test-gemini-key-0000-not-a-real-key';
 const FAKE_ORS_KEY = 'test-ors-key-0000-not-a-real-key';
@@ -181,6 +191,16 @@ const POINT_START: GeoPoint = { lat: 20.00512, lon: 73.79105 }; // near Panchava
 
 const ROUTE_FIELDS = /"(distanceM|durationS|path)"\s*:/;
 
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+async function waitFor(check: () => boolean, ms = 3000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > until) throw new Error('timed out waiting for the stub to be called');
+    await sleep(10);
+  }
+}
+
 async function errorOf(promise: Promise<unknown>): Promise<GeoServiceError | null> {
   try {
     await promise;
@@ -214,7 +234,7 @@ function validate(body: unknown) {
 
 async function runItineraryTestSuite() {
   console.log('=================================================================');
-  console.log('NAMO YATRI AI ITINERARY TEST SUITE (17 SCENARIOS)');
+  console.log('NAMO YATRI AI ITINERARY TEST SUITE (20 SCENARIOS)');
   console.log('=================================================================\n');
 
   const server = http.createServer(app);
@@ -368,11 +388,24 @@ async function runItineraryTestSuite() {
     // -------------------------------------------------------------
     // POST /api/itinerary/generate and generateItinerary()
     // -------------------------------------------------------------
-    await assertTest(4, 'Validation: days, interests, budget, pace, mode and start are checked before any upstream call', async () => {
+    await assertTest(4, 'Validation: days, interests, budget, pace, mode and start are checked, and required, before any upstream call', async () => {
       configure({ gemini: FAKE_GEMINI_KEY, ors: true });
       resetAll();
+      const without = (field: string) => Object.fromEntries(Object.entries(httpBody()).filter(([key]) => key !== field));
       const cases: [unknown, string][] = [
         [[1, 2], 'INVALID_ITINERARY_REQUEST'],
+        [null, 'INVALID_ITINERARY_REQUEST'],
+        ['3 days please', 'INVALID_ITINERARY_REQUEST'],
+        [{}, 'INVALID_TRIP_DAYS'],
+        [without('days'), 'INVALID_TRIP_DAYS'],
+        [without('interests'), 'INVALID_INTERESTS'],
+        [without('budget'), 'INVALID_BUDGET'],
+        [without('pace'), 'INVALID_PACE'],
+        [without('mode'), 'INVALID_TRAVEL_MODE'],
+        [without('start'), 'INVALID_TRIP_START'],
+        [httpBody({ start: { type: 'point', lat: 20.0, lon: 73.79 } }), 'INVALID_TRIP_START'],
+        [httpBody({ start: { type: 'point', label: 'Hotel' } }), 'INVALID_COORDINATES'],
+        [httpBody({ interests: 'temples' }), 'INVALID_INTERESTS'],
         [httpBody({ days: 0 }), 'INVALID_TRIP_DAYS'],
         [httpBody({ days: 8 }), 'INVALID_TRIP_DAYS'],
         [httpBody({ days: 2.5 }), 'INVALID_TRIP_DAYS'],
@@ -700,7 +733,219 @@ async function runItineraryTestSuite() {
       return { success: ok, details: `${res.status} ${res.text}; leaked: ${leaks.join(', ') || 'nothing'}` };
     });
 
-    await assertTest(17, 'Limits: a body over 4 KB is 413 before anything runs; the 11th plan request in 10 minutes gets 429', async () => {
+    await assertTest(17, 'A three-day trip over HTTP: exactly three days, every stop one the AI was offered, no repeats, each day routed from the start', async () => {
+      configure({ gemini: FAKE_GEMINI_KEY, ors: true });
+      resetAll();
+      modelReply = autoPlan(3, 2);
+      const start = roundRouteStop(POINT_START);
+      const res = await postPlan(
+        httpBody({
+          days: 3,
+          start: { type: 'point', lat: POINT_START.lat, lon: POINT_START.lon, label: 'Our dharamshala' },
+          interests: ['temples', 'history'],
+          mode: 'driving',
+        }),
+      );
+      const offered = modelCalls[0] ? promptCandidates(modelCalls[0]).map(c => c.id) : [];
+      const schema: any = modelCalls[0]?.schema;
+      const days: any[] = res.body?.days ?? [];
+      const stops = days.flatMap(d => d.stops);
+      const ids: string[] = stops.map(s => s.placeId);
+      const ok =
+        res.status === 200 &&
+        res.body.dayCount === 3 && days.length === 3 && days.map(d => d.day).join() === '1,2,3' &&
+        schema?.properties?.days?.minItems === 3 && schema.properties.days.maxItems === 3 &&
+        /Return exactly 3 days/.test(modelCalls[0].systemInstruction) &&
+        days.every(d => d.stops.length > 0 && typeof d.title === 'string') &&
+        ids.length === 6 && new Set(ids).size === 6 &&
+        ids.every(id => offered.includes(id)) &&
+        offered.includes('node/8') && offered.every(id => [...TEMPLE_IDS, 'node/8'].includes(id)) &&
+        stops.every(s => {
+          const el = OSM_ELEMENTS.find(e => `${e.type}/${e.id}` === s.placeId)!;
+          return s.lat === (el.lat ?? el.center!.lat) && s.lon === (el.lon ?? el.center!.lon) && (s.name === el.tags['name:en'] || s.name === el.tags.name);
+        }) &&
+        days.every(
+          d =>
+            d.route.status === 'ok' && d.route.route.mode === 'driving' &&
+            d.route.route.stops.length === d.stops.length + 1 &&
+            d.route.route.stops[0].lat === start.lat && d.route.route.stops[0].lon === start.lon,
+        ) &&
+        orsCalls.length === 3 && orsCalls.every(c => c.url.endsWith('/driving-car/geojson'));
+      return {
+        success: ok,
+        details: `${res.status}; ${days.map(d => `day ${d.day}: ${d.stops.map((s: any) => s.name).join(' → ')}`).join(' | ')}; offered ${offered.length}`,
+      };
+    });
+
+    await assertTest(18, 'Editing a day: no old route, spinner or error shows for changed stops, and undoing an edit made while a route was loading does not spin forever', async () => {
+      const start = roundRouteStop(POINT_START);
+      const a = { lat: 20.0069, lon: 73.7953 };
+      const b = { lat: 20.0089, lon: 73.7962 };
+      const c = { lat: 20.0071, lon: 73.793 };
+      const before = dayRoutePoints(start, [a, b, c]);
+      const after = dayRoutePoints(start, moveItem([a, b, c], 2, -1));
+      const key = routeKey('walking', before);
+      const route = { mode: 'walking', stops: before.map(roundRouteStop), distanceM: 2100, durationS: 1500 } as unknown as RouteResponse;
+      const cache = new Map<string, RouteResponse>();
+      const view = (points: typeof before, state: DayRouteState, mode: TravelMode = 'walking', routingConfigured = true) =>
+        dayRouteView({ routingConfigured, points, mode, state }, k => cache.get(k));
+
+      const ok: DayRouteState = { status: 'ok', key, data: route };
+      const failed: DayRouteState = { status: 'error', key, code: 'ROUTE_NOT_FOUND', message: 'No route.', canRetry: false };
+      const loading: DayRouteState = { status: 'loading', key, slow: false };
+      const staleHidden =
+        view(before, ok).kind === 'ok' &&
+        view(after, ok).kind === 'outdated' &&
+        view(after, failed).kind === 'outdated' &&
+        view(after, loading).kind === 'outdated' &&
+        view(dayRoutePoints(start, removeItem([a, b, c], 1)), ok).kind === 'outdated' &&
+        view(before, ok, 'driving').kind === 'outdated' &&
+        view(before, ok, 'walking', false).kind === 'not_configured' &&
+        view(dayRoutePoints(null, [a]), { status: 'none' }).kind === 'too_few_stops';
+
+      // The bug: a route was loading, a stop was moved (cancelling the
+      // request), then moved back. The old loading state matched the stops
+      // again, so the day showed a spinner for a request nobody was making,
+      // and "Update route" never came back.
+      const keptAsIs = view(before, loading).kind;
+      const cleared = withoutPendingRoute(loading);
+      const undone = view(before, cleared).kind;
+      const undoneOk =
+        keptAsIs === 'loading' && cleared.status === 'none' && undone === 'outdated' &&
+        withoutPendingRoute(ok) === ok && withoutPendingRoute(failed) === failed;
+
+      // A route already fetched in this visit for exactly these stops comes back from the cache.
+      cache.set(key, route);
+      const cachedView = view(before, { status: 'none' });
+      const cacheOk = cachedView.kind === 'ok' && cachedView.route === route && view(after, { status: 'none' }).kind === 'outdated';
+
+      // The panel really uses these: there is no UI test runner, so read its source.
+      const source = readFileSync(new URL('../src/components/TripPlanner.tsx', import.meta.url), 'utf8');
+      const bodyOf = (name: string) => {
+        const at = source.indexOf(`const ${name} = `);
+        return at < 0 ? '' : source.slice(at, source.indexOf('\n  };', at));
+      };
+      const wired =
+        bodyOf('moveStop').includes('withoutPendingRoute(') &&
+        bodyOf('removeStop').includes('withoutPendingRoute(') &&
+        source.slice(source.indexOf('const viewOf = '), source.indexOf('const viewOf = ') + 300).includes('dayRouteView(');
+      return {
+        success: staleHidden && undoneOk && cacheOk && wired,
+        details: `stale hidden: ${staleHidden}; undo after a cancelled load: ${keptAsIs} before the fix, ${undone} after; cache: ${cachedView.kind}; panel wired: ${wired}`,
+      };
+    });
+
+    await assertTest(19, 'Cancelling: a plan nobody waits for stops before the AI and before routes; a second tab with the same plan still gets it', async () => {
+      configure({ gemini: FAKE_GEMINI_KEY, ors: true });
+      const problems: string[] = [];
+
+      // Already cancelled: nothing is looked up.
+      resetAll();
+      const early = await errorOf(generateItinerary(AREA_REQUEST, AbortSignal.abort()));
+      if (early?.code !== 'ITINERARY_CANCELLED' || overpassCalls.length !== 0) problems.push(`already cancelled: ${early?.code}, ${overpassCalls.length} lookups`);
+
+      // Cancelled while places load: the lookup finishes and is cached for
+      // others, but the AI is never asked and no route is made.
+      resetAll();
+      let releasePlaces = () => {};
+      overpassReply = () => new Promise(resolve => (releasePlaces = () => resolve(json({ elements: OSM_ELEMENTS }))));
+      modelReply = autoPlan(2, 2);
+      const tab = new AbortController();
+      const duringPlaces = errorOf(generateItinerary(AREA_REQUEST, tab.signal));
+      await waitFor(() => overpassCalls.length === 1);
+      tab.abort();
+      const placesErr = await duringPlaces;
+      await sleep(50);
+      if (placesErr?.code !== 'ITINERARY_CANCELLED' || modelCalls.length !== 0) problems.push(`during places: ${placesErr?.code}, ${modelCalls.length} AI calls`);
+      // Asked again while the cancelled plan still waits for places: a new
+      // plan (sharing the same lookup), never the cancelled one.
+      const again = generateItinerary(AREA_REQUEST).catch((err: GeoServiceError) => err);
+      releasePlaces();
+      const againPlan = await again;
+      await sleep(100);
+      const againDays = againPlan instanceof GeoServiceError ? againPlan.code : againPlan.days.length;
+      // One AI call and two routes, all for the new plan: the cancelled one made none.
+      if (againDays !== 2 || modelCalls.length !== 1 || orsCalls.length !== 2 || overpassCalls.length !== 1) {
+        problems.push(`asking again: ${againDays} days, ${modelCalls.length} AI, ${orsCalls.length} route and ${overpassCalls.length} place calls`);
+      }
+
+      // Cancelled while the AI answers: its call is aborted and no route is made.
+      resetAll();
+      let releaseModel = () => {};
+      const seen: { signal: AbortSignal | null } = { signal: null };
+      modelReply = request => {
+        seen.signal = request.signal;
+        return new Promise(resolve => (releaseModel = () => resolve(autoPlan(2, 2)(request))));
+      };
+      const tab2 = new AbortController();
+      const duringAi = errorOf(generateItinerary(AREA_REQUEST, tab2.signal));
+      await waitFor(() => modelCalls.length === 1);
+      tab2.abort();
+      const aiErr = await duringAi;
+      releaseModel();
+      await sleep(100);
+      if (aiErr?.code !== 'ITINERARY_CANCELLED' || seen.signal?.aborted !== true || orsCalls.length !== 0) {
+        problems.push(`during AI: ${aiErr?.code}, model call aborted ${seen.signal?.aborted}, ${orsCalls.length} route calls`);
+      }
+
+      // Cancelled while days are routed: the day under way finishes, no later day is routed.
+      resetAll();
+      modelReply = () => planReply([['node/1', 'node/3'], ['way/4', 'node/13'], ['node/14', 'node/15']]);
+      orsReply = (_u, init) => new Promise(resolve => setTimeout(() => resolve(echoRoute(init)), 200));
+      const tab3 = new AbortController();
+      const duringRoutes = errorOf(generateItinerary({ ...AREA_REQUEST, days: 3 }, tab3.signal));
+      await waitFor(() => orsCalls.length === 1);
+      tab3.abort();
+      const routesErr = await duringRoutes;
+      // Route calls are at least 1.5 s apart, so a second one would have started by now.
+      await sleep(2000);
+      if (routesErr?.code !== 'ITINERARY_CANCELLED' || orsCalls.length !== 1) {
+        problems.push(`during routes: ${routesErr?.code}, ${orsCalls.length} route calls for 3 days`);
+      }
+
+      // Two tabs asked for the same trip: one leaves, the other still gets it, from one AI call.
+      resetAll();
+      modelReply = request => new Promise(resolve => setTimeout(() => resolve(autoPlan(2, 2)(request)), 50));
+      const leavingTab = new AbortController();
+      const leaving = errorOf(generateItinerary(AREA_REQUEST, leavingTab.signal));
+      const staying = generateItinerary(AREA_REQUEST, new AbortController().signal);
+      leavingTab.abort();
+      const [leftErr, kept] = await Promise.all([leaving, staying]);
+      if (leftErr?.code !== 'ITINERARY_CANCELLED' || kept.days.length !== 2 || !kept.days.every(d => d.route.status === 'ok') || modelCalls.length !== 1) {
+        problems.push(`two tabs: ${leftErr?.code}, other got ${kept.days.length} days, ${modelCalls.length} AI calls`);
+      }
+
+      // Over HTTP: the browser cancels while places load, which closes the
+      // connection, and the server never asks the AI.
+      resetAll();
+      overpassReply = () => new Promise(resolve => setTimeout(() => resolve(json({ elements: OSM_ELEMENTS })), 300));
+      modelReply = autoPlan(2, 2);
+      const browser = new AbortController();
+      planPosts++;
+      const posted = fetch(`${baseUrl}/api/itinerary/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(httpBody()),
+        signal: browser.signal,
+      }).then(
+        () => 'answered',
+        err => err?.name,
+      );
+      await waitFor(() => overpassCalls.length === 1);
+      browser.abort();
+      const outcome = await posted;
+      await sleep(600);
+      if (outcome !== 'AbortError' || modelCalls.length !== 0 || orsCalls.length !== 0) {
+        problems.push(`HTTP: ${outcome}, ${modelCalls.length} AI and ${orsCalls.length} route calls after the browser left`);
+      }
+
+      return {
+        success: problems.length === 0,
+        details: problems.length ? problems.join('; ') : 'cancelled before places, during places, during the AI, during routes and over HTTP: no AI or new route call after cancelling; a shared plan survives one tab leaving',
+      };
+    });
+
+    await assertTest(20, 'Limits: a body over 4 KB is 413 before anything runs; the 11th plan request in 10 minutes gets 429', async () => {
       configure({ gemini: FAKE_GEMINI_KEY, ors: false });
       resetAll();
       const big = await fetch(`${baseUrl}/api/itinerary/generate`, {

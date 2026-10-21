@@ -15,7 +15,8 @@ import {
   Droplet, 
   Cross, 
   Sparkles, 
-  Calendar, 
+  Calendar,
+  CalendarDays,
   ChevronRight,
   ShieldCheck,
   PhoneCall,
@@ -35,6 +36,8 @@ interface Props {
   onOpenPlace: (placeId: string) => void;
   /** Opens the Map tab and searches OpenStreetMap there for `query`. */
   onSearchMap: (query: string) => void;
+  /** Opens the Map tab at its AI trip planner. */
+  onPlanTrip: () => void;
   onOpenSOS: () => void;
   onOpenAI: () => void;
   announcements: OfficialAnnouncement[];
@@ -48,6 +51,7 @@ export const HomeScreen: React.FC<Props> = ({
   onNavigateTab,
   onOpenPlace,
   onSearchMap,
+  onPlanTrip,
   onOpenSOS,
   onOpenAI,
   announcements,
@@ -200,6 +204,39 @@ export const HomeScreen: React.FC<Props> = ({
               </div>
             )}
           </div>
+        </div>
+      </section>
+
+      {/* Multi-day trip planner. The planner itself lives on the Map tab, so
+          this only opens it there. */}
+      <section
+        id="home-plan-trip"
+        aria-labelledby="home-plan-trip-heading"
+        className="rounded-2xl border border-orange-200 bg-gradient-to-br from-orange-50 to-amber-50 p-4 shadow-xs"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-600 text-white" aria-hidden="true">
+              <CalendarDays className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h3 id="home-plan-trip-heading" className="font-serif text-lg leading-tight text-stone-900">
+                {t.tripCardTitle}
+              </h3>
+              <p className="mt-0.5 text-xs text-stone-700 sm:text-sm">{t.tripCardText}</p>
+              {t.tripCardLanguageNote && <p className="mt-1 text-[11px] text-stone-500">{t.tripCardLanguageNote}</p>}
+            </div>
+          </div>
+          <button
+            id="home-plan-trip-btn"
+            type="button"
+            onClick={onPlanTrip}
+            className="inline-flex min-h-12 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-orange-600 px-4 text-sm font-semibold text-white transition hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+          >
+            <Sparkles className="h-4 w-4" />
+            <span>{t.tripCardButton}</span>
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       </section>
 

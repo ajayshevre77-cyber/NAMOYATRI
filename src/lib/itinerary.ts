@@ -12,7 +12,7 @@
  * suggested visit time, and those are labelled as AI suggestions.
  */
 import { GeoPoint } from './geo';
-import { RouteResponse, TravelMode } from './routing';
+import { MIN_ROUTE_STOPS, RouteResponse, TravelMode, routeKey } from './routing';
 
 export const MIN_TRIP_DAYS = 1;
 export const MAX_TRIP_DAYS = 7;
@@ -283,3 +283,54 @@ export function moveItem<T>(list: T[], index: number, delta: -1 | 1): T[] {
 export function removeItem<T>(list: T[], index: number): T[] {
   return index < 0 || index >= list.length ? list : list.filter((_, i) => i !== index);
 }
+
+/**
+ * The last route request made for one day of the editable itinerary, keyed
+ * by `routeKey(mode, points)` of the stops it was made for.
+ */
+export type DayRouteState =
+  | { status: 'none' }
+  | { status: 'ok'; key: string; data: RouteResponse }
+  | { status: 'loading'; key: string; slow: boolean }
+  | { status: 'error'; key: string; code: string; message: string; canRetry: boolean };
+
+/** What a day's route section shows. Only `ok` has a distance, a time or a line. */
+export type DayRouteView =
+  | { kind: 'not_configured' }
+  | { kind: 'too_few_stops' }
+  | { kind: 'ok'; route: RouteResponse }
+  | { kind: 'loading'; slow: boolean }
+  | { kind: 'error'; code: string; message: string; canRetry: boolean }
+  | { kind: 'outdated' };
+
+/**
+ * A day's route section for its points (start first) and mode right now.
+ * A stored result is used only when it was made for exactly these points in
+ * this order and this mode; otherwise a route already fetched for them, or
+ * `outdated`. So after an edit no old line, distance, time, spinner or error
+ * is shown for stops it was not made for.
+ */
+export function dayRouteView(
+  day: { routingConfigured: boolean; points: GeoPoint[]; mode: TravelMode; state: DayRouteState },
+  cached: (key: string) => RouteResponse | undefined,
+): DayRouteView {
+  if (!day.routingConfigured) return { kind: 'not_configured' };
+  if (day.points.length < MIN_ROUTE_STOPS) return { kind: 'too_few_stops' };
+  const key = routeKey(day.mode, day.points);
+  const s = day.state;
+  if (s.status !== 'none' && s.key === key) {
+    if (s.status === 'ok') return { kind: 'ok', route: s.data };
+    if (s.status === 'loading') return { kind: 'loading', slow: s.slow };
+    return { kind: 'error', code: s.code, message: s.message, canRetry: s.canRetry };
+  }
+  const hit = cached(key);
+  return hit ? { kind: 'ok', route: hit } : { kind: 'outdated' };
+}
+
+/**
+ * A day's route state once its pending request has been cancelled, as an
+ * edit to its stops does. `loading` is dropped: kept, it would spin forever
+ * if the edit were undone, with nothing fetching and no way to ask again.
+ */
+export const withoutPendingRoute = (state: DayRouteState): DayRouteState =>
+  state.status === 'loading' ? { status: 'none' } : state;
