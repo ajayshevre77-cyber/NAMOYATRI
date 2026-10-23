@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import { MOCK_TRANSPORT_OPTIONS, PICKUP_POINTS, DROP_POINTS } from '../../src/data/kumbhData';
-import { MAX_PASSENGERS, MAX_ADVANCE_BOOKING_DAYS, maxPassengersFor } from '../../src/lib/fare';
+import { MOCK_TRANSPORT_OPTIONS, PICKUP_POINTS, DROP_POINTS, RIDE_POINT_AREAS } from '../../src/data/kumbhData';
+import { MAX_PASSENGERS, MAX_ADVANCE_BOOKING_DAYS, RideArea, areaOfPoint, maxPassengersFor } from '../../src/lib/fare';
+import { MAX_RIDE_PLACE_LABEL, RidePlace } from '../../src/lib/rides';
 import { TransportOption } from '../../src/types';
 import { GeoPoint, isInServiceArea, SERVICE_AREA, NEARBY_RADII_M, DEFAULT_NEARBY_RADIUS_M } from '../../src/lib/geo';
 import { MAX_ROUTE_STOPS, MIN_ROUTE_STOPS, TravelMode, isTravelMode, roundRouteStop } from '../../src/lib/routing';
@@ -74,34 +75,96 @@ interface FieldProblem {
   code: string;
 }
 
+/** Where a validated place is, rounded to about 11 m. */
+export interface RidePlacePosition {
+  lat: number;
+  lon: number;
+  source: RidePlace['source'];
+  approximate: boolean;
+}
+
+/** One end of a validated trip. */
+export interface ValidRideEnd {
+  label: string;
+  area: RideArea;
+  /** The position of a place from the map or a trip plan; null for a fixed demo point, which has none. */
+  place: RidePlacePosition | null;
+}
+
+export interface ValidTrip {
+  from: ValidRideEnd;
+  to: ValidRideEnd;
+  option: TransportOption;
+}
+
+/**
+ * One end of a trip: a name from the fixed pickup or drop list, or a place
+ * `{ label, lat, lon, source, approximate }` inside the service area. The
+ * area that prices the trip comes from the list or from the coordinates,
+ * never from the wording of a name.
+ */
+function parseRideEnd(value: unknown, role: 'pickup' | 'drop'): ValidRideEnd | FieldProblem {
+  const code = role === 'pickup' ? 'INVALID_PICKUP_POINT' : 'INVALID_DROP_POINT';
+  const word = role === 'pickup' ? 'pickup' : 'destination';
+  if (typeof value === 'string') {
+    const points = role === 'pickup' ? PICKUP_POINTS : DROP_POINTS;
+    if (!points.includes(value)) return { error: `Choose a ${word} point from the list.`, code };
+    return { label: value, area: RIDE_POINT_AREAS[value], place: null };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { error: `Choose a ${word} point from the list, or a place on the map.`, code };
+  }
+  const { label, lat, lon, source, approximate } = value as Record<string, unknown>;
+  const name = cleanLabel(label, MAX_RIDE_PLACE_LABEL);
+  if (!name || (source !== 'openstreetmap' && source !== 'sample')) {
+    return { error: `The ${word} place needs a name of up to ${MAX_RIDE_PLACE_LABEL} characters and its source.`, code };
+  }
+  if (!isCoordinate(lat, -90, 90) || !isCoordinate(lon, -180, 180)) {
+    return { error: `The ${word} place does not have valid coordinates.`, code: 'INVALID_COORDINATES' };
+  }
+  const point = roundRouteStop({ lat, lon });
+  if (!isInServiceArea(point)) {
+    return { error: `The ${word} must be in the ${SERVICE_AREA.name}.`, code: 'OUTSIDE_SERVICE_AREA' };
+  }
+  return {
+    label: name,
+    area: areaOfPoint(point),
+    // A sample site's position is approximate, whatever the client says.
+    place: { ...point, source, approximate: source === 'sample' || approximate === true },
+  };
+}
+
+const isFieldProblem = (value: ValidRideEnd | FieldProblem): value is FieldProblem => 'code' in value;
+
+const sameEnd = (a: ValidRideEnd, b: ValidRideEnd) =>
+  a.place && b.place ? a.place.lat === b.place.lat && a.place.lon === b.place.lon : !a.place && !b.place && a.label === b.label;
+
 /**
  * Checks the route and ride type of a trip. Shared by the fare estimate and the
- * ride request so both accept exactly the same trips.
- *
- * Pickup and drop must come from the fixed point lists the app offers, and the
- * ride type from the transport catalogue, because the server prices the trip
- * from those values.
+ * ride request so both accept, and price, exactly the same trips.
  */
-export function checkTripFields(body: any): FieldProblem | null {
+export function parseTripFields(body: any): { trip: ValidTrip } | { problem: FieldProblem } {
   const { from, to, transportType } = body ?? {};
 
-  if (typeof from !== 'string' || !PICKUP_POINTS.includes(from)) {
-    return { error: 'Choose a pickup point from the list.', code: 'INVALID_PICKUP_POINT' };
+  const fromEnd = parseRideEnd(from, 'pickup');
+  if (isFieldProblem(fromEnd)) return { problem: fromEnd };
+  const toEnd = parseRideEnd(to, 'drop');
+  if (isFieldProblem(toEnd)) return { problem: toEnd };
+  if (sameEnd(fromEnd, toEnd)) {
+    return { problem: { error: 'Choose a destination that is not the pickup.', code: 'SAME_PICKUP_AND_DROP' } };
   }
-  if (typeof to !== 'string' || !DROP_POINTS.includes(to)) {
-    return { error: 'Choose a destination from the list.', code: 'INVALID_DROP_POINT' };
-  }
-  if (!MOCK_TRANSPORT_OPTIONS.some(o => o.type === transportType)) {
+  const option = MOCK_TRANSPORT_OPTIONS.find(o => o.type === transportType);
+  if (!option) {
     const allowed = MOCK_TRANSPORT_OPTIONS.map(o => o.type).join(', ');
-    return { error: `Invalid transportType. Allowed: ${allowed}`, code: 'INVALID_TRANSPORT_TYPE' };
+    return { problem: { error: `Invalid transportType. Allowed: ${allowed}`, code: 'INVALID_TRANSPORT_TYPE' } };
   }
-  return null;
+  return { trip: { from: fromEnd, to: toEnd, option } };
 }
 
 /** Validated, normalised ride request, left on `res.locals.rideRequest`. */
 export interface ValidRideRequest {
-  from: string;
-  to: string;
+  from: ValidRideEnd;
+  to: ValidRideEnd;
   option: TransportOption;
   passengers: number;
   /** ISO string, or null for "leave now". */
@@ -118,14 +181,14 @@ const DEPARTURE_GRACE_MS = 60 * 1000;
  * computes them. Any `estimatedFare` or `estimatedTimeMins` sent is ignored.
  */
 export function validateRideRequestBody(req: Request, res: Response, next: NextFunction): void {
-  const tripProblem = checkTripFields(req.body);
-  if (tripProblem) {
-    res.status(400).json(tripProblem);
+  const parsed = parseTripFields(req.body);
+  if ('problem' in parsed) {
+    res.status(400).json(parsed.problem);
     return;
   }
 
-  const { from, to, transportType, passengers = 1, departAt = null } = req.body;
-  const option = MOCK_TRANSPORT_OPTIONS.find(o => o.type === transportType)!;
+  const { from, to, option } = parsed.trip;
+  const { passengers = 1, departAt = null } = req.body;
 
   if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) {
     res.status(400).json({

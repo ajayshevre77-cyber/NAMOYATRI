@@ -4,6 +4,88 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-21 (Request a demo ride from the map or a trip plan; Trimbak fares fixed)
+
+### What was wrong
+
+- **Rides and the map didn't connect.** A place found on the map, or a stop in
+  an AI trip plan, couldn't be used as a ride destination. The ride form only
+  offered its own two fixed lists.
+- **Leaving the map lost your trip plan.** Switching to another tab threw the
+  plan away, so there was no way back to it from the ride form.
+- **Some fares used the wrong distance.** The demo fare decided whether a
+  place was in Trimbakeshwar by looking for the word "Trimbak" in its name:
+  - "Kushavarta Kund Bus Terminal" (in Trimbakeshwar) to Ramkund (in Nashik)
+    was priced as an 8.4 km trip, though it is about 28 km;
+  - the same terminal to Kushavarta Kund, a short walk, was priced as 28.5 km;
+  - Trimbakeshwar Temple Outer Gate to the temple next to it was priced as
+    8.4 km.
+
+  In all, 10 of the 64 pickup and drop pairs were mispriced.
+- **The form showed a distance and fare before a destination was chosen**,
+  and called the distance "approx.", although it was never measured.
+
+### What's new
+
+- **"Request a ride (demo)" on every trip-plan stop.** The stop becomes the
+  destination, and the stop before it the pickup. For a day's first stop, the
+  pickup is the trip's starting place. If the trip starts at your own
+  location, you choose the pickup, because a remembered location may be out
+  of date.
+- **"Request a ride here (demo)" on map places**: OpenStreetMap places, search
+  results and Kumbh sample sites. You choose the pickup.
+- **The ride form shows where the ride came from**, with "Show on map" and,
+  for a trip stop, "Back to trip plan". The trip plan, your route and the
+  selected place are all still there when you go back.
+- **Picked places stay what they are.** A place from the map is labelled
+  "Place from OpenStreetMap". A sample site says "approximate location", and
+  the server keeps it marked approximate. The fixed pickup and drop points
+  have no map position, so none is made up for them. Either end can be
+  changed back to the list.
+- **Fares are priced by area.** Each fixed point now has its area written
+  down. A map place's area comes from its position: whichever of Nashik or
+  Trimbakeshwar is nearer. The demo distance is a fixed value for each kind
+  of trip:
+  - within Nashik: 8.4 km;
+  - within Trimbakeshwar: 3 km;
+  - between the two: 28.5 km.
+
+  The form says plainly that this is a fixed demo value, not measured on a
+  map or by road. The estimate updates as soon as either end changes, and
+  nothing is shown until both are chosen.
+- The server still prices every ride itself and ignores any fare the app
+  sends. Every request is still recorded as "requested, not dispatched", and
+  no driver or vehicle is sent.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. `git diff --check`:
+  clean.
+- The ride tests now pass **20/20** (6 new). They cover:
+  - all 64 pickup and drop pairs, including the four mispriced ones above;
+  - the estimate changing when either end changes;
+  - the server's quote matching the form's;
+  - a ride from a trip stop and from a map place, recorded with the server's
+    fare and not dispatched;
+  - a sample site staying approximate;
+  - 12 kinds of bad request (missing, bad or out-of-area coordinates, no
+    name, an unknown source, the same place twice) refused;
+  - no screen claiming a ride is booked or a driver is on the way.
+- Fourteen deliberate bugs were added one at a time, and the tests caught
+  every one.
+- The other suites still pass: security **17/17**, SOS hold **9/9**, map
+  **23/23**, place search **15/15**, routing **16/16**, trip planner **20/20**,
+  Namo AI **19/19**.
+- The ride form was rendered in three states (from a trip stop, from a sample
+  site, and opened normally) and its text checked.
+- **Not checked in a browser:** the Chrome extension wasn't connected, so
+  nothing was clicked through: the buttons, the map's "Show on map" and "Back
+  to trip plan", and the map being kept while on other tabs. Submitting a
+  request also needs a real sign-in, which was not done; the tests cover the
+  recorded request over HTTP instead.
+
+---
+
 ## 2026-10-21 (Trip planner: easy to find from Home, cancels cleanly, no stuck routes)
 
 The AI trip planner (1 to 7 days, e.g. a 3-day visit) already existed on the

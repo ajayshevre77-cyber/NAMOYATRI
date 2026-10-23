@@ -9,6 +9,7 @@ import {
   FraudAlert,
   AuditLog
 } from '../types';
+import type { TripArea } from '../lib/itinerary';
 
 export const SIMHASTHA_DESTINATION = {
   id: 'nashik_trimbakeshwar_2027',
@@ -712,8 +713,10 @@ export const MOCK_AUDIT_LOGS: AuditLog[] = [
   },
 ];
 
-// Demo boarding and alighting points for ride requests.
-// The server only accepts trips between these points (see checkTripFields).
+// Demo boarding and alighting points for ride requests. A ride starts and
+// ends at one of these, or at a place picked on the map or in a trip plan
+// (see parseTripFields). They are names only: there are no trustworthy map
+// positions for them, so none are given.
 export const PICKUP_POINTS = [
   'Nashik Road Railway Station',
   'Panchavati Central Circle',
@@ -735,3 +738,27 @@ export const DROP_POINTS = [
   'Outer Satellite Parking P4 (Adgaon)',
   'Sadhu Gram Mahamandaleshwar Camp',
 ];
+
+/**
+ * Which area each pickup and drop point is in; the demo fare depends on it
+ * (src/lib/fare.ts). It used to be guessed from the word "Trimbak" in the
+ * name, which put "Kushavarta Kund Bus Terminal" in Nashik.
+ */
+export const RIDE_POINT_AREAS: Record<string, TripArea> = {
+  'Nashik Road Railway Station': 'nashik',
+  'Panchavati Central Circle': 'nashik',
+  'Ramkund Holy Ghat Step 1': 'nashik',
+  'Central Bus Stand (CBS Nashik)': 'nashik',
+  'Outer Parking Hub P4 (Adgaon)': 'nashik',
+  'Sadhu Gram Sector 2': 'nashik',
+  'Trimbakeshwar Temple Outer Gate': 'trimbakeshwar',
+  'Kushavarta Kund Bus Terminal': 'trimbakeshwar',
+  'Ramkund Holy Bathing Ghat': 'nashik',
+  'Trimbakeshwar Jyotirlinga Mandir': 'trimbakeshwar',
+  'Shri Kalaram Mandir Panchavati': 'nashik',
+  'Tapovan Sacred Groves & Sangam': 'nashik',
+  'Kushavarta Kund (Trimbak)': 'trimbakeshwar',
+  'Muktidham Pilgrim Annachhatra': 'nashik',
+  'Outer Satellite Parking P4 (Adgaon)': 'nashik',
+  'Sadhu Gram Mahamandaleshwar Camp': 'nashik',
+};

@@ -42,6 +42,7 @@ import {
 } from '../lib/itinerary';
 import { GeoRequestError, UserPosition, fetchRoute } from '../lib/geoApi';
 import { fetchItineraryStatus, requestItinerary } from '../lib/itineraryApi';
+import { RideDraft, rideDraftForTripStop } from '../lib/rides';
 import { MapRouteStop } from './PilgrimMap';
 import { RETRYABLE_CODES, RouteStopItem, googleMapsDirectionsUrl, googleMapsPlaceDirectionsUrl } from './RoutePlanner';
 
@@ -362,6 +363,16 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     setAnnouncement(`${stop.name} removed from day ${day.day}.`);
   };
 
+  /** A demo ride to a stop, picked up at the stop before it (or the trip's starting place). */
+  const rideDraftFor = (index: number, stopIndex: number): Omit<RideDraft, 'id'> | null => {
+    const day = trip?.days[index];
+    if (!trip || !day) return null;
+    return rideDraftForTripStop(
+      { start: trip.response.start, startKind: trip.startKind, day: day.day, stops: day.stops },
+      stopIndex,
+    );
+  };
+
   /** Puts a day on the map, or takes the trip off it with null. */
   const showDay = (index: number | null) => {
     setShownDay(index);
@@ -406,6 +417,7 @@ export function useTripPlanner(onShow?: (view: { points: GeoPoint[]; route: Rout
     updateRoute,
     moveStop,
     removeStop,
+    rideDraftFor,
     shownDay,
     showDay,
     mapDay,
@@ -432,15 +444,19 @@ const smallButton =
   'inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-stone-200 bg-white px-3 text-xs font-semibold text-stone-800 transition hover:bg-stone-100 disabled:opacity-60';
 const iconButton = 'flex h-12 w-12 items-center justify-center rounded-xl text-stone-600 hover:bg-stone-200 disabled:opacity-30';
 
+/** Opens the ride form with a stop as the destination. */
+type RequestRide = (draft: Omit<RideDraft, 'id'>) => void;
+
 interface Props {
   trip: TripPlannerState;
   selectedPlace: SelectedStartPlace | null;
   onUseMyLocation: () => Promise<UserPosition | null>;
   locating: boolean;
   onFocusPoint: (point: GeoPoint) => void;
+  onRequestRide?: RequestRide;
 }
 
-export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocation, locating, onFocusPoint }) => {
+export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocation, locating, onFocusPoint, onRequestRide }) => {
   const { form, mode, availability, generation, formProblem } = trip;
   const loading = generation.status === 'loading';
   const notConfigured = availability === 'not_configured';
@@ -729,7 +745,7 @@ export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocat
         <p className="sr-only">{trip.announcement}</p>
       </div>
 
-      {trip.trip && <Itinerary trip={trip} onFocusPoint={onFocusPoint} />}
+      {trip.trip && <Itinerary trip={trip} onFocusPoint={onFocusPoint} onRequestRide={onRequestRide} />}
 
       <p className="border-t border-stone-100 pt-2 text-[10px] leading-relaxed text-stone-500">
         To plan, Namo Yatri looks up places on OpenStreetMap around your start (rounded to about 100 m) and sends the list,
@@ -744,7 +760,11 @@ export const TripPlanner: React.FC<Props> = ({ trip, selectedPlace, onUseMyLocat
 // The itinerary
 // ---------------------------------------------------------------------------
 
-const Itinerary: React.FC<{ trip: TripPlannerState; onFocusPoint: (point: GeoPoint) => void }> = ({ trip, onFocusPoint }) => {
+const Itinerary: React.FC<{ trip: TripPlannerState; onFocusPoint: (point: GeoPoint) => void; onRequestRide?: RequestRide }> = ({
+  trip,
+  onFocusPoint,
+  onRequestRide,
+}) => {
   const t = trip.trip!;
   const r = t.response;
   const mode = trip.mode;
@@ -794,7 +814,7 @@ const Itinerary: React.FC<{ trip: TripPlannerState; onFocusPoint: (point: GeoPoi
       <ol aria-label="Days of your trip" className="space-y-3">
         {t.days.map((day, index) => (
           <li key={day.day}>
-            <TripDay trip={trip} day={day} index={index} mode={mode} onFocusPoint={onFocusPoint} />
+            <TripDay trip={trip} day={day} index={index} mode={mode} onFocusPoint={onFocusPoint} onRequestRide={onRequestRide} />
           </li>
         ))}
       </ol>
@@ -821,7 +841,8 @@ const TripDay: React.FC<{
   index: number;
   mode: TravelMode;
   onFocusPoint: (point: GeoPoint) => void;
-}> = ({ trip, day, index, mode, onFocusPoint }) => {
+  onRequestRide?: RequestRide;
+}> = ({ trip, day, index, mode, onFocusPoint, onRequestRide }) => {
   const t = trip.trip!;
   const start = t.response.start;
   const view = trip.viewOf(day);
@@ -850,7 +871,12 @@ const TripDay: React.FC<{
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-[10rem] flex-1">
-          <h4 id={headingId} className="text-sm font-bold text-stone-900">
+          {/* Focusable so "Back to trip plan" in the ride form can land here. */}
+          <h4
+            id={headingId}
+            tabIndex={-1}
+            className="rounded-md text-sm font-bold text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+          >
             <span className="text-orange-700">Day {day.day}</span> · {day.title}
           </h4>
           {day.summary && <p className="text-xs text-stone-600">{day.summary}</p>}
@@ -976,6 +1002,20 @@ const TripDay: React.FC<{
                   <Navigation className="h-3.5 w-3.5 text-orange-600" />
                   <span>Directions</span>
                 </a>
+                {onRequestRide && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const draft = trip.rideDraftFor(index, i);
+                      if (draft) onRequestRide(draft);
+                    }}
+                    className={smallButton}
+                    aria-label={`Request a demo ride to ${stop.name}`}
+                  >
+                    <Car className="h-3.5 w-3.5 text-orange-600" />
+                    <span>Request a ride (demo)</span>
+                  </button>
+                )}
                 <a
                   href={stop.osmUrl}
                   target="_blank"

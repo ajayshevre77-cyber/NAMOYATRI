@@ -1,18 +1,20 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowRightLeft, CalendarClock, Minus, Plus, Route, Clock } from 'lucide-react';
 import { TransportOption, TransportType } from '../types';
 import { LocationInput } from './LocationInput';
 import { RideOptions } from './RideOptions';
 import { BookRideButton } from './BookRideButton';
-import { estimateTrip, maxPassengersFor, MAX_ADVANCE_BOOKING_DAYS } from '../lib/fare';
+import { demoDistanceBasis, maxPassengersFor, MAX_ADVANCE_BOOKING_DAYS } from '../lib/fare';
+import { RideEnd, RidePlace, estimateRide, isRidePlace, sameRideEnd } from '../lib/rides';
 
 /**
  * What the pilgrim asked for. There is no fare here on purpose: the server
  * prices the trip itself, and the form's figure is only a preview.
  */
 export interface RideRequestDetails {
-  from: string;
-  to: string;
+  /** A fixed demo point's name, or a place from the map or a trip plan. */
+  from: RideEnd;
+  to: RideEnd;
   transportType: TransportType;
   passengers: number;
   /** ISO string when scheduled, null when the pilgrim is leaving now. */
@@ -27,9 +29,54 @@ interface Props {
   submitting?: boolean;
   /** Surfaces a failure from the caller's API call. */
   submitError?: string | null;
+  /** A pickup and destination handed over from the map or a trip plan. */
+  initialFrom?: RideEnd | null;
+  initialTo?: RideEnd | null;
 }
 
 type Errors = Partial<Record<'from' | 'to' | 'departAt' | 'passengers', string>>;
+
+/** A pickup or destination that is a place from the map or a trip plan, with a way back to the list. */
+const PlaceField: React.FC<{
+  label: string;
+  place: RidePlace;
+  icon: React.ReactNode;
+  error?: string;
+  disabled: boolean;
+  onChange: () => void;
+}> = ({ label, place, icon, error, disabled, onChange }) => {
+  const labelId = useId();
+  return (
+    <div role="group" aria-labelledby={labelId} className="space-y-1.5">
+      <span id={labelId} className="block text-xs font-semibold text-stone-600">
+        {label}
+      </span>
+      <div className={`flex items-center gap-2.5 rounded-xl border bg-stone-50 pl-3 ${error ? 'border-red-400' : 'border-stone-200'}`}>
+        <span className="shrink-0">{icon}</span>
+        <span className="min-w-0 flex-1 py-1.5">
+          <span className="block truncate text-sm font-semibold text-stone-900">{place.label}</span>
+          <span className="block text-[11px] text-stone-500">
+            {place.source === 'sample' ? 'Kumbh sample site · approximate location' : 'Place from OpenStreetMap'}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={onChange}
+          disabled={disabled}
+          aria-label={`Change ${label.toLowerCase()}: choose from the list instead of ${place.label}`}
+          className="min-h-[48px] shrink-0 rounded-r-xl px-3 text-xs font-semibold text-orange-700 underline transition hover:bg-stone-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50"
+        >
+          Change
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+};
 
 /**
  * The ride booking form: route, timing, ride type and passenger count.
@@ -45,9 +92,13 @@ export const RideBookingCard: React.FC<Props> = ({
   onSubmit,
   submitting = false,
   submitError = null,
+  initialFrom = null,
+  initialTo = null,
 }) => {
-  const [from, setFrom] = useState(pickupPoints[0] ?? '');
-  const [to, setTo] = useState('');
+  // A handed-over destination without a pickup leaves the pickup for the
+  // pilgrim to choose, rather than defaulting to the first point in the list.
+  const [from, setFrom] = useState<RideEnd | ''>(initialFrom ?? (initialTo ? '' : (pickupPoints[0] ?? '')));
+  const [to, setTo] = useState<RideEnd | ''>(initialTo ?? '');
   const [departNow, setDepartNow] = useState(true);
   const [departAt, setDepartAt] = useState('');
   const [passengers, setPassengers] = useState(1);
@@ -56,15 +107,25 @@ export const RideBookingCard: React.FC<Props> = ({
   );
   const [errors, setErrors] = useState<Errors>({});
 
+  // "Change" on a place swaps it for the list, which removes the button that
+  // had focus; focus moves to that list instead of falling to the page.
+  const fromField = useRef<HTMLDivElement>(null);
+  const toField = useRef<HTMLDivElement>(null);
+  const [focusList, setFocusList] = useState<'from' | 'to' | null>(null);
+  useEffect(() => {
+    if (!focusList) return;
+    (focusList === 'from' ? fromField : toField).current?.querySelector('select')?.focus();
+    setFocusList(null);
+  }, [focusList]);
+
   const activeOption =
     transportOptions.find((o) => o.type === transportType) ?? transportOptions[0];
 
   // Preview only, from the same estimator the server prices the ride with.
-  const { distanceKm: estimatedDistanceKm, estimatedFare, estimatedTimeMins } = useMemo(
-    () =>
-      activeOption
-        ? estimateTrip(activeOption, from, to)
-        : { distanceKm: 0, estimatedFare: 0, estimatedTimeMins: 0 },
+  // Recalculated whenever either end or the ride type changes; nothing is
+  // shown until both ends are chosen.
+  const estimate = useMemo(
+    () => (activeOption ? estimateRide(activeOption, from || null, to || null) : null),
     [activeOption, from, to],
   );
 
@@ -73,10 +134,10 @@ export const RideBookingCard: React.FC<Props> = ({
   const validate = (): Errors => {
     const next: Errors = {};
     if (!from) next.from = 'Choose a pickup point.';
-    else if (!pickupPoints.includes(from)) next.from = 'Choose a pickup point from the list.';
+    else if (typeof from === 'string' && !pickupPoints.includes(from)) next.from = 'Choose a pickup point from the list.';
     if (!to) next.to = 'Choose a destination.';
-    else if (!dropPoints.includes(to)) next.to = 'Choose a destination from the list.';
-    if (from && to && from === to) next.to = 'Destination must differ from pickup.';
+    else if (typeof to === 'string' && !dropPoints.includes(to)) next.to = 'Choose a destination from the list.';
+    if (from && to && sameRideEnd(from, to)) next.to = 'Destination must differ from pickup.';
     if (passengers > seatLimit) {
       next.passengers = `${activeOption?.title ?? 'This ride'} seats at most ${seatLimit}. Choose fewer passengers or another ride type.`;
     }
@@ -98,8 +159,8 @@ export const RideBookingCard: React.FC<Props> = ({
     if (Object.keys(found).length > 0) return;
 
     onSubmit({
-      from,
-      to,
+      from: from as RideEnd,
+      to: to as RideEnd,
       transportType,
       passengers,
       departAt: departNow ? null : new Date(departAt).toISOString(),
@@ -107,9 +168,11 @@ export const RideBookingCard: React.FC<Props> = ({
   };
 
   // Pickup and drop come from different lists. Swapping is offered only when
-  // each value exists in the other list; otherwise both selects would hold a
-  // value they cannot show, and the server would reject the request.
-  const canSwap = pickupPoints.includes(to) && dropPoints.includes(from);
+  // each value fits the other field: a place from the map always does, a
+  // list point only if the other list has it. Otherwise a select would hold
+  // a value it cannot show, and the server would reject the request.
+  const fits = (end: RideEnd | '', list: string[]) => isRidePlace(end) || (!!end && list.includes(end));
+  const canSwap = fits(to, pickupPoints) && fits(from, dropPoints);
 
   const handleSwap = () => {
     setFrom(to);
@@ -124,73 +187,116 @@ export const RideBookingCard: React.FC<Props> = ({
 
   return (
     <form
+      id="ride-request-form"
       onSubmit={handleSubmit}
       noValidate
       className="bg-white rounded-2xl border border-stone-200 shadow-sm p-4 sm:p-5 space-y-4"
     >
       <div>
-        <h1 className="text-lg font-bold text-stone-900">Request a ride</h1>
+        {/* Focusable so a hand-over from the map or a trip plan can land here. */}
+        <h1 id="ride-form-heading" tabIndex={-1} className="text-lg font-bold text-stone-900 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500">
+          Request a ride
+        </h1>
         <p className="text-xs text-stone-500 mt-0.5">
           Demo only: fares and wait times are estimates, not official rates, and no vehicle is dispatched.
         </p>
       </div>
 
       {/* Route */}
-      <div className="space-y-3 relative">
-        <LocationInput
-          label="Pickup"
-          value={from}
-          onChange={(v) => setFrom(v)}
-          options={pickupPoints}
-          placeholder="Where are you now?"
-          error={errors.from}
-          required
-          disabled={submitting}
-          icon={<span className="block w-2.5 h-2.5 rounded-full bg-emerald-500" aria-hidden="true" />}
-        />
-
-        <LocationInput
-          label="Destination"
-          value={to}
-          onChange={(v) => setTo(v)}
-          options={dropPoints}
-          placeholder="Where are you going?"
-          error={errors.to}
-          required
-          disabled={submitting}
-          icon={<span className="block w-2.5 h-2.5 rounded-sm bg-orange-500" aria-hidden="true" />}
-        />
+      <div className="space-y-3">
+        <div ref={fromField}>
+          {isRidePlace(from) ? (
+            <PlaceField
+              label="Pickup"
+              place={from}
+              error={errors.from}
+              disabled={submitting}
+              onChange={() => {
+                setFrom('');
+                setFocusList('from');
+              }}
+              icon={<span className="block w-2.5 h-2.5 rounded-full bg-emerald-500" aria-hidden="true" />}
+            />
+          ) : (
+            <LocationInput
+              label="Pickup"
+              value={from}
+              onChange={(v) => setFrom(v)}
+              options={pickupPoints}
+              placeholder="Where are you now?"
+              error={errors.from}
+              required
+              disabled={submitting}
+              icon={<span className="block w-2.5 h-2.5 rounded-full bg-emerald-500" aria-hidden="true" />}
+            />
+          )}
+        </div>
 
         {canSwap && (
-          <button
-            type="button"
-            onClick={handleSwap}
-            disabled={submitting}
-            aria-label="Swap pickup and destination"
-            className="
-              absolute right-2 top-[64px] z-10
-              w-9 h-9 rounded-full bg-white border border-stone-200 shadow-sm
-              flex items-center justify-center text-stone-500
-              transition hover:text-orange-600 hover:border-orange-300 active:scale-95
-              focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500
-              disabled:opacity-50 disabled:cursor-not-allowed
-            "
-          >
-            <ArrowRightLeft className="w-4 h-4 rotate-90" aria-hidden="true" />
-          </button>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleSwap}
+              disabled={submitting}
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl px-2 text-xs font-semibold text-stone-600 transition hover:bg-stone-100 hover:text-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ArrowRightLeft className="w-4 h-4 rotate-90" aria-hidden="true" />
+              Swap pickup and destination
+            </button>
+          </div>
         )}
+
+        <div ref={toField}>
+          {isRidePlace(to) ? (
+            <PlaceField
+              label="Destination"
+              place={to}
+              error={errors.to}
+              disabled={submitting}
+              onChange={() => {
+                setTo('');
+                setFocusList('to');
+              }}
+              icon={<span className="block w-2.5 h-2.5 rounded-sm bg-orange-500" aria-hidden="true" />}
+            />
+          ) : (
+            <LocationInput
+              label="Destination"
+              value={to}
+              onChange={(v) => setTo(v)}
+              options={dropPoints}
+              placeholder="Where are you going?"
+              error={errors.to}
+              required
+              disabled={submitting}
+              icon={<span className="block w-2.5 h-2.5 rounded-sm bg-orange-500" aria-hidden="true" />}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Trip estimate */}
-      <div className="flex items-center gap-4 rounded-xl bg-stone-50 border border-stone-200 px-3 py-2.5">
-        <span className="inline-flex items-center gap-1.5 text-xs text-stone-600">
-          <Route className="w-3.5 h-3.5 text-stone-400" aria-hidden="true" />
-          ~{estimatedDistanceKm} km (approx.)
-        </span>
-        <span className="inline-flex items-center gap-1.5 text-xs text-stone-600">
-          <Clock className="w-3.5 h-3.5 text-stone-400" aria-hidden="true" />
-          about {estimatedTimeMins} min
-        </span>
+      {/* Trip estimate: a fixed demo distance per kind of trip, never a measured one. */}
+      <div id="ride-estimate" aria-live="polite" className="rounded-xl bg-stone-50 border border-stone-200 px-3 py-2.5 text-xs text-stone-600">
+        {estimate ? (
+          <>
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="inline-flex items-center gap-1.5">
+                <Route className="w-3.5 h-3.5 text-stone-400" aria-hidden="true" />
+                Demo distance {estimate.distanceKm} km
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-stone-400" aria-hidden="true" />
+                about {estimate.estimatedTimeMins} min (demo)
+              </span>
+            </p>
+            <p className="mt-1 text-[11px] text-stone-500">
+              The same fixed demo value for any trip {demoDistanceBasis(estimate.fromArea, estimate.toArea)}. It is not
+              measured on a map or by road, so the fare is only a rough demo estimate.
+            </p>
+          </>
+        ) : (
+          <p>Choose a pickup and a destination to see a demo fare estimate.</p>
+        )}
       </div>
 
       {/* Timing */}
@@ -293,7 +399,7 @@ export const RideBookingCard: React.FC<Props> = ({
         options={transportOptions}
         selected={transportType}
         onSelect={setTransportType}
-        distanceKm={estimatedDistanceKm}
+        distanceKm={estimate?.distanceKm ?? null}
         disabled={submitting}
       />
 
@@ -307,7 +413,7 @@ export const RideBookingCard: React.FC<Props> = ({
         onClick={handleSubmit}
         loading={submitting}
         label="Request ride (demo)"
-        trailing={`~₹${estimatedFare}`}
+        trailing={estimate ? `~₹${estimate.estimatedFare}` : undefined}
       />
 
       {activeOption?.disclaimer && (

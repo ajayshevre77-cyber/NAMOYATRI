@@ -41,6 +41,8 @@ import { FraudAlertScreen } from './views/FraudAlertScreen';
 import { AccountSecurityView } from './views/AccountSecurityView';
 import { DataFeedNotice } from './components/DataFeedNotice';
 import { fetchCollection, getAuthHeader } from './lib/api';
+import { RideDraft } from './lib/rides';
+import type { MapJump } from './views/MapScreen';
 
 // Role Dashboards
 import { DriverDashboard } from './views/DriverDashboard';
@@ -77,12 +79,27 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
     setMapSearch({ query });
     setActiveTab('map');
   };
-  // "Plan a trip" on Home: the Map tab opens at its trip planner, once.
-  const [openTripPlanner, setOpenTripPlanner] = useState(false);
-  const planTrip = () => {
-    setOpenTripPlanner(true);
+  // Opening the Map tab at one part of it, once: the trip planner ("Plan a
+  // trip" on Home), or a place or trip day (from the ride form).
+  const [mapJump, setMapJump] = useState<MapJump | null>(null);
+  const goToMap = (jump: MapJump) => {
+    setMapJump(jump);
     setActiveTab('map');
   };
+  const planTrip = () => goToMap({ to: 'trip-planner' });
+  // "Request a ride (demo)" on the map or a trip stop: the Travel tab's ride
+  // form opens with that place filled in. It stays until another hand-over.
+  const [rideDraft, setRideDraft] = useState<RideDraft | null>(null);
+  const startRide = (draft: Omit<RideDraft, 'id'>) => {
+    setRideDraft({ ...draft, id: Date.now() });
+    setActiveTab('travel');
+  };
+  // The map mounts on its first visit and is then only hidden, so a trip
+  // plan, a route or a selected place is still there after another tab.
+  const [mapOpened, setMapOpened] = useState(initialTab === 'map');
+  useEffect(() => {
+    if (activeTab === 'map') setMapOpened(true);
+  }, [activeTab]);
 
   // Sync role if updated in profile
   useEffect(() => {
@@ -242,18 +259,22 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
               />
             )}
 
-            {activeTab === 'map' && (
-              <Suspense fallback={<p className="py-12 text-center text-sm text-stone-500">Loading map…</p>}>
-                <MapScreen
-                  places={places}
-                  currentLanguage={currentLanguage}
-                  onSelectPlace={(id) => setSelectedPlaceId(id)}
-                  initialSearch={mapSearch}
-                  onInitialSearchHandled={() => setMapSearch(null)}
-                  openTripPlanner={openTripPlanner}
-                  onTripPlannerOpened={() => setOpenTripPlanner(false)}
-                />
-              </Suspense>
+            {(activeTab === 'map' || mapOpened) && (
+              <div hidden={activeTab !== 'map'}>
+                <Suspense fallback={<p className="py-12 text-center text-sm text-stone-500">Loading map…</p>}>
+                  <MapScreen
+                    places={places}
+                    currentLanguage={currentLanguage}
+                    onSelectPlace={(id) => setSelectedPlaceId(id)}
+                    initialSearch={mapSearch}
+                    onInitialSearchHandled={() => setMapSearch(null)}
+                    active={activeTab === 'map'}
+                    jump={mapJump}
+                    onJumpDone={() => setMapJump(null)}
+                    onRequestRide={startRide}
+                  />
+                </Suspense>
+              </div>
             )}
 
             {activeTab === 'travel' && (
@@ -261,6 +282,8 @@ function AppContent({ initialTab = 'home' }: { initialTab?: TouristTab }) {
                 transportOptions={transportOptions}
                 currentLanguage={currentLanguage}
                 onOpenPassTab={() => setActiveTab('pass')}
+                rideDraft={rideDraft}
+                onReturnToMap={goToMap}
               />
             )}
 

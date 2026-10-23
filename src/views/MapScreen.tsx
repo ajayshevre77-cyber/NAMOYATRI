@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Car,
   Crosshair,
   ExternalLink,
   Loader2,
@@ -42,6 +43,17 @@ import {
 } from '../lib/geo';
 import { GeoRequestError, UserPosition, fetchNearbyPlaces, requestCurrentPosition, searchGeo } from '../lib/geoApi';
 import { searchSamplePlaces, suggestSampleQueries } from '../lib/placeSearch';
+import { RideDraft, RidePlace, rideDraftForMapPlace, ridePlace } from '../lib/rides';
+
+/**
+ * Where another tab sends the pilgrim on the map: the trip planner ("Plan a
+ * trip" on Home), one day of the plan, or a point (a ride's destination,
+ * with its trip day put on the map first when it came from a plan).
+ */
+export type MapJump =
+  | { to: 'trip-planner' }
+  | { to: 'trip-day'; day: number }
+  | { to: 'map'; point: GeoPoint; tripDay?: number };
 
 interface Props {
   places: Place[];
@@ -51,10 +63,14 @@ interface Props {
   initialSearch?: { query: string } | null;
   /** Called once `initialSearch` has been started, so it is not repeated. */
   onInitialSearchHandled?: () => void;
-  /** "Plan a trip" from Home: scroll to the trip planner and focus it when the map opens. */
-  openTripPlanner?: boolean;
-  /** Called once the trip planner has been brought into view, so it is not repeated. */
-  onTripPlannerOpened?: () => void;
+  /** False while another tab is open: the map stays mounted (keeping a trip plan) but hidden. */
+  active?: boolean;
+  /** Bring this part of the map screen into view, once. */
+  jump?: MapJump | null;
+  /** Called once `jump` has been done, so it is not repeated. */
+  onJumpDone?: () => void;
+  /** Opens the ride form on the Travel tab with this destination (and maybe pickup). */
+  onRequestRide?: (draft: Omit<RideDraft, 'id'>) => void;
 }
 
 /** Centre of the nearby search. Only `isUser` anchors came from the device's location. */
@@ -120,8 +136,10 @@ export const MapScreen: React.FC<Props> = ({
   onSelectPlace,
   initialSearch,
   onInitialSearchHandled,
-  openTripPlanner,
-  onTripPlannerOpened,
+  active = true,
+  jump = null,
+  onJumpDone,
+  onRequestRide,
 }) => {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [radiusM, setRadiusM] = useState<number>(DEFAULT_NEARBY_RADIUS_M);
@@ -406,25 +424,56 @@ export const MapScreen: React.FC<Props> = ({
     onInitialSearchHandled?.();
   }, [initialSearch]);
 
-  // "Plan a trip" on Home: bring the planner into view and move focus to its
-  // heading, so keyboard and screen-reader users land there too. It waits
-  // until the route and trip planners know whether they are set up (or
-  // 1.5 s), because their "not set up" notices change the height above it.
-  const [tripScrollDue, setTripScrollDue] = useState(false);
+  // A jump from another tab ("Plan a trip" on Home, or the ride form's "Show
+  // on map" and "Back to trip plan"): bring the target into view and move
+  // focus there, so keyboard and screen-reader users land there too. On a
+  // first visit it waits until the route and trip planners know whether they
+  // are set up (or 1.5 s), because their "not set up" notices change the
+  // height above the trip planner.
+  const [jumpDue, setJumpDue] = useState(false);
   useEffect(() => {
-    if (!openTripPlanner) return;
-    const timer = setTimeout(() => setTripScrollDue(true), 1500);
+    if (!jump) return;
+    const timer = setTimeout(() => setJumpDue(true), 1500);
     return () => clearTimeout(timer);
-  }, [openTripPlanner]);
+  }, [jump]);
   useEffect(() => {
-    if (!openTripPlanner) return;
+    if (!jump) return;
     const settled = planner.availability !== 'checking' && trip.availability !== 'checking';
-    if (!settled && !tripScrollDue) return;
-    document.getElementById('trip-planner')?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
-    document.getElementById('trip-heading')?.focus({ preventScroll: true });
-    setTripScrollDue(false);
-    onTripPlannerOpened?.();
-  }, [openTripPlanner, planner.availability, trip.availability, tripScrollDue]);
+    if (!settled && !jumpDue) return;
+    const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+    const reveal = (sectionId: string, focusId: string) => {
+      document.getElementById(sectionId)?.scrollIntoView({ behavior, block: 'start' });
+      document.getElementById(focusId)?.focus({ preventScroll: true });
+    };
+    if (jump.to === 'map') {
+      // As the stop's own "Map" button does: its day on the map, then the place.
+      const dayIndex = jump.tripDay ? (trip.trip?.days.findIndex(d => d.day === jump.tripDay) ?? -1) : -1;
+      if (dayIndex >= 0 && trip.shownDay !== dayIndex) trip.showDay(dayIndex);
+      focusPoint(jump.point);
+      mapWrapRef.current?.scrollIntoView({ behavior, block: 'nearest' });
+      mapWrapRef.current?.focus({ preventScroll: true });
+    } else if (jump.to === 'trip-day' && document.getElementById(`trip-day-${jump.day}`)) {
+      reveal(`trip-day-${jump.day}`, `trip-day-${jump.day}-heading`);
+    } else {
+      // The planner itself, or a day that is no longer there (the plan was cleared).
+      reveal('trip-planner', 'trip-heading');
+    }
+    setJumpDue(false);
+    onJumpDone?.();
+  }, [jump, planner.availability, trip.availability, jumpDue]);
+
+  /** "Request a ride here (demo)" on a place's details card. */
+  const rideButton = (place: RidePlace) =>
+    onRequestRide && (
+      <button
+        type="button"
+        onClick={() => onRequestRide(rideDraftForMapPlace(place))}
+        className="inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border border-orange-200 bg-orange-50 px-3 text-xs font-semibold text-orange-900 transition hover:bg-orange-100"
+      >
+        <Car className="h-4 w-4" />
+        <span>Request a ride here (demo)</span>
+      </button>
+    );
 
   const closeSearch = () => {
     searchAbort.current?.abort();
@@ -565,6 +614,7 @@ export const MapScreen: React.FC<Props> = ({
       actions = (
         <>
           {addToRouteButton({ point: { lat: p.lat, lon: p.lon }, label: liveName(p), kind: 'place' })}
+          {rideButton(ridePlace({ label: liveName(p), point: p, kind: 'place' }))}
           {nearHereButton(p, liveName(p))}
           {linkButton(p.osmUrl, 'View on OpenStreetMap', <ExternalLink className="h-3.5 w-3.5" />)}
           {linkButton(googleMapsUrl(p), 'Open in Google Maps', <Navigation className="h-3.5 w-3.5 text-orange-600" />)}
@@ -597,6 +647,7 @@ export const MapScreen: React.FC<Props> = ({
             Full details
           </button>
           {addToRouteButton({ point, label: placeName(p), kind: 'sample', note: 'Sample site: approximate location' })}
+          {rideButton(ridePlace({ label: placeName(p), point, kind: 'sample' }))}
           {nearHereButton(point, placeName(p))}
           {linkButton(googleMapsUrl(point), 'Open in Google Maps', <Navigation className="h-3.5 w-3.5 text-orange-600" />)}
         </>
@@ -614,6 +665,7 @@ export const MapScreen: React.FC<Props> = ({
       actions = (
         <>
           {addToRouteButton({ point: { lat: r.lat, lon: r.lon }, label: r.name, kind: 'place' })}
+          {rideButton(ridePlace({ label: r.name, point: r, kind: 'place' }))}
           {r.osmUrl && linkButton(r.osmUrl, 'View on OpenStreetMap', <ExternalLink className="h-3.5 w-3.5" />)}
         </>
       );
@@ -947,9 +999,12 @@ export const MapScreen: React.FC<Props> = ({
             ref={mapWrapRef}
             role="region"
             aria-label="Map of the Nashik–Trimbakeshwar area. Every place on the map is also in the list."
-            className="relative isolate h-[55vh] min-h-[320px] max-h-[600px] scroll-mt-20 overflow-hidden rounded-2xl border border-stone-200 bg-stone-200 lg:h-[560px] lg:max-h-none"
+            // Focusable so "Show on map" from the ride form can land here.
+            tabIndex={-1}
+            className="relative isolate h-[55vh] min-h-[320px] max-h-[600px] scroll-mt-20 overflow-hidden rounded-2xl border border-stone-200 bg-stone-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 lg:h-[560px] lg:max-h-none"
           >
             <PilgrimMap
+              active={active}
               samplePlaces={shownSamples}
               livePlaces={shownLive}
               userPosition={userPosition}
@@ -1094,6 +1149,7 @@ export const MapScreen: React.FC<Props> = ({
 
           <TripPlanner
             trip={trip}
+            onRequestRide={onRequestRide}
             selectedPlace={selectedStart}
             onUseMyLocation={getPosition}
             locating={locating}

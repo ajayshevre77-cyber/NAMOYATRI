@@ -143,6 +143,14 @@ export interface TransportOption {
   disclaimer: string;
 }
 
+export interface RidePlacePosition {
+  lat: number;
+  lon: number;
+  source: 'openstreetmap' | 'sample';
+  /** True for a sample site, whose position is only approximate. */
+  approximate: boolean;
+}
+
 export interface RideBooking {
   id: string;
   bookingRef: string;
@@ -154,7 +162,14 @@ export interface RideBooking {
   passengers: number;
   /** ISO time of a scheduled ride; null means the pilgrim is leaving now. */
   departAt: string | null;
+  /** Position of a pickup or destination picked on the map or in a trip plan; null for a fixed demo point. */
+  fromPlace?: RidePlacePosition | null;
+  toPlace?: RidePlacePosition | null;
+  fromArea?: 'nashik' | 'trimbakeshwar';
+  toArea?: 'nashik' | 'trimbakeshwar';
+  /** The fixed demo distance for this kind of trip, never a measured one. */
   distanceKm: number;
+  distanceBasis?: 'DEMO_AREA_DISTANCE';
   estimatedFare: number;
   estimatedTimeMins: number;
   /** The server prices every ride with its demo estimator; client fares are ignored. */

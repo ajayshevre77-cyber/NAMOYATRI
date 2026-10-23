@@ -5,9 +5,13 @@ import { PICKUP_POINTS, DROP_POINTS } from '../data/kumbhData';
 import { RideBookingCard, RideRequestDetails } from './RideBookingCard';
 import { useAuth, GuestContinuation } from '../context/AuthContext';
 import { secureFetch } from '../lib/api';
+import { demoDistanceBasis } from '../lib/fare';
+import { RideDraft } from '../lib/rides';
 
 interface Props {
   transportOptions: TransportOption[];
+  /** A pickup and destination handed over from the map or a trip plan. */
+  draft?: RideDraft | null;
 }
 
 // Continuing as a guest from the sign-in popup submits the request at once,
@@ -38,7 +42,7 @@ const formatDeparture = (departAt: string | null) =>
  * recorded demo request, never as a confirmed or dispatched ride, because the
  * server only stores it: no driver or vehicle is sent.
  */
-export const RideRequestPanel: React.FC<Props> = ({ transportOptions }) => {
+export const RideRequestPanel: React.FC<Props> = ({ transportOptions, draft = null }) => {
   const { requireAuth } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -80,18 +84,24 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions }) => {
   if (!booking) {
     return (
       <RideBookingCard
+        // A new hand-over starts the form afresh with its places.
+        key={draft?.id ?? 'manual'}
         transportOptions={transportOptions}
         pickupPoints={PICKUP_POINTS}
         dropPoints={DROP_POINTS}
         onSubmit={handleSubmit}
         submitting={submitting}
         submitError={submitError}
+        initialFrom={draft?.from ?? null}
+        initialTo={draft?.to ?? null}
       />
     );
   }
 
   const rideTitle =
     transportOptions.find((o) => o.type === booking.transportType)?.title ?? booking.transportType;
+  const approximate = (place: RideBooking['fromPlace']) =>
+    place?.approximate ? <span className="text-stone-500"> (approximate location)</span> : null;
 
   return (
     <section
@@ -124,11 +134,17 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions }) => {
       <div className="space-y-2 text-sm">
         <p className="flex items-start gap-2 text-stone-700">
           <MapPin className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" aria-hidden="true" />
-          <span>{booking.fromLocation}</span>
+          <span>
+            {booking.fromLocation}
+            {approximate(booking.fromPlace)}
+          </span>
         </p>
         <p className="flex items-start gap-2 text-stone-700">
           <MapPin className="w-4 h-4 mt-0.5 text-orange-600 shrink-0" aria-hidden="true" />
-          <span>{booking.toLocation}</span>
+          <span>
+            {booking.toLocation}
+            {approximate(booking.toPlace)}
+          </span>
         </p>
       </div>
 
@@ -151,9 +167,11 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions }) => {
         </div>
       </dl>
 
-      <div className="flex items-center justify-between rounded-xl bg-stone-50 border border-stone-200 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-stone-50 border border-stone-200 px-3 py-2.5">
         <span className="text-xs text-stone-600">
-          Demo fare estimate · ~{booking.distanceKm} km · about {booking.estimatedTimeMins} min
+          Demo fare estimate · demo distance {booking.distanceKm} km
+          {booking.fromArea && booking.toArea && `, the fixed value for any trip ${demoDistanceBasis(booking.fromArea, booking.toArea)}`}{' '}
+          (not measured) · about {booking.estimatedTimeMins} min
         </span>
         <span className="text-base font-bold text-stone-900">₹{booking.estimatedFare}</span>
       </div>

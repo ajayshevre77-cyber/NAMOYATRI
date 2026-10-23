@@ -7,8 +7,8 @@ interface Props {
   options: TransportOption[];
   selected: TransportType;
   onSelect: (type: TransportType) => void;
-  /** Distance used to price each option, in km. */
-  distanceKm: number;
+  /** Demo distance used to price each option, in km; null until both ends of the trip are chosen. */
+  distanceKm: number | null;
   disabled?: boolean;
 }
 
@@ -70,9 +70,11 @@ export const RideOptions: React.FC<Props> = ({
 
             <span className="flex items-baseline gap-1">
               <span className={`text-base font-bold ${isSelected ? 'text-orange-700' : 'text-stone-900'}`}>
-                ₹{fareFor(option, distanceKm)}
+                {distanceKm === null ? '—' : `₹${fareFor(option, distanceKm)}`}
               </span>
-              <span className="text-[10px] font-medium text-stone-500">estimate</span>
+              <span className="text-[10px] font-medium text-stone-500">
+                {distanceKm === null ? 'choose a trip' : 'demo estimate'}
+              </span>
             </span>
 
             <span className="flex items-center gap-2 text-[10px] text-stone-500">

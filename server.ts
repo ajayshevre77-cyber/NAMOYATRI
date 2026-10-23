@@ -30,7 +30,8 @@ import {
   validateRideRequestBody,
   validatePassPurchaseBody,
   validateEmergencyReportBody,
-  checkTripFields,
+  parseTripFields,
+  RidePlacePosition,
   ValidRideRequest,
   validateNearbyQuery,
   validateGeoSearchQuery,
@@ -43,7 +44,7 @@ import {
   ValidItineraryRequest,
   ValidChatRequest
 } from './server/middleware/validation';
-import { estimateTrip } from './src/lib/fare';
+import { RideArea, estimateTrip } from './src/lib/fare';
 import { findNearbyPlaces, searchPlaces, GeoServiceError } from './server/geo';
 import { getRoutingStatus, planRoute } from './server/routing';
 import { isGeminiConfigured } from './server/gemini';
@@ -120,7 +121,14 @@ interface RideRecord {
   passengers: number;
   /** ISO time of a scheduled ride; null means leave now. */
   departAt: string | null;
+  /** Where pickup and destination are, when they were places from the map or a trip plan; null for a fixed demo point. */
+  fromPlace: RidePlacePosition | null;
+  toPlace: RidePlacePosition | null;
+  fromArea: RideArea;
+  toArea: RideArea;
+  /** The fixed demo distance for this kind of trip (src/lib/fare.ts), not a measured one. */
   distanceKm: number;
+  distanceBasis: 'DEMO_AREA_DISTANCE';
   estimatedFare: number;
   estimatedTimeMins: number;
   fareBasis: 'DEMO_ESTIMATE';
@@ -283,7 +291,12 @@ const rideBookings: RideRecord[] = [
     transportType: 'electric_shuttle',
     passengers: 1,
     departAt: null,
+    fromPlace: null,
+    toPlace: null,
+    fromArea: 'nashik',
+    toArea: 'nashik',
     distanceKm: 8.4,
+    distanceBasis: 'DEMO_AREA_DISTANCE',
     estimatedFare: 15,
     estimatedTimeMins: 22,
     fareBasis: 'DEMO_ESTIMATE',
@@ -492,25 +505,27 @@ app.get('/api/transport/options', publicLimiter, (req: Request, res: Response) =
 // Same estimator and the same accepted trips as /api/rides/request, so a quote
 // always matches the fare the ride is stored with.
 app.post('/api/transport/estimate', publicLimiter, (req: Request, res: Response) => {
-  const problem = checkTripFields(req.body);
-  if (problem) {
-    res.status(400).json(problem);
+  const parsed = parseTripFields(req.body);
+  if ('problem' in parsed) {
+    res.status(400).json(parsed.problem);
     return;
   }
 
-  const { from, to, transportType } = req.body;
-  const option = MOCK_TRANSPORT_OPTIONS.find(o => o.type === transportType)!;
-  const estimate = estimateTrip(option, from, to);
+  const { from, to, option } = parsed.trip;
+  const estimate = estimateTrip(option, from.area, to.area);
 
   res.json({
-    from,
-    to,
+    from: from.label,
+    to: to.label,
     transportType: option.type,
+    fromArea: estimate.fromArea,
+    toArea: estimate.toArea,
     distanceKm: estimate.distanceKm,
+    distanceBasis: 'DEMO_AREA_DISTANCE',
     estimatedFareInr: estimate.estimatedFare,
     estimatedTimeMins: estimate.estimatedTimeMins,
     fareBasis: 'DEMO_ESTIMATE',
-    notice: 'Demo estimate only. Not an official or regulated fare; distance is approximate.',
+    notice: 'Demo estimate only. Not an official or regulated fare; the distance is a fixed demo value for this kind of trip, not a measured one.',
   });
 });
 
@@ -805,18 +820,23 @@ app.get('/api/rides/:rideId', bookingLimiter, requireAuth, validateIdParam('ride
 app.post('/api/rides/request', bookingLimiter, requireAuth, rejectSuspendedAccount, validateRideRequestBody, (req: AuthenticatedRequest, res: Response) => {
   const user = req.user!;
   const { from, to, option, passengers, departAt } = res.locals.rideRequest as ValidRideRequest;
-  const estimate = estimateTrip(option, from, to);
+  const estimate = estimateTrip(option, from.area, to.area);
 
   const newRide: RideRecord = {
     id: 'bk_' + Date.now(),
     bookingRef: 'NY-RD-' + Math.floor(1000 + Math.random() * 9000),
     userId: user.uid, // Strictly bound to authenticated UID
-    fromLocation: from,
-    toLocation: to,
+    fromLocation: from.label,
+    toLocation: to.label,
     transportType: option.type,
     passengers,
     departAt,
+    fromPlace: from.place,
+    toPlace: to.place,
+    fromArea: estimate.fromArea,
+    toArea: estimate.toArea,
     distanceKm: estimate.distanceKm,
+    distanceBasis: 'DEMO_AREA_DISTANCE',
     estimatedFare: estimate.estimatedFare,
     estimatedTimeMins: estimate.estimatedTimeMins,
     fareBasis: 'DEMO_ESTIMATE',

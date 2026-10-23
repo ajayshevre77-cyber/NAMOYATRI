@@ -23,6 +23,8 @@ export interface MapRouteStop {
 }
 
 interface Props {
+  /** False while the map's tab is hidden. */
+  active?: boolean;
   samplePlaces: Place[];
   livePlaces: LivePlace[];
   userPosition: UserPosition | null;
@@ -93,6 +95,19 @@ function MapController({ focus, onViewChange }: { focus: MapFocus | null; onView
     mouseout: () => map.scrollWheelZoom.disable(),
   });
 
+  return null;
+}
+
+/**
+ * Leaflet measures its box once. The map stays mounted, hidden, while
+ * another tab is open, so it measures again when shown, or tiles and fits
+ * use a zero-sized box.
+ */
+function ResizeWhenShown({ active }: { active: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    if (active) map.invalidateSize();
+  }, [active, map]);
   return null;
 }
 
@@ -175,6 +190,7 @@ function RouteLayer({ stops, path, mode }: { stops: MapRouteStop[]; path: [numbe
 }
 
 export const PilgrimMap: React.FC<Props> = ({
+  active = true,
   samplePlaces,
   livePlaces,
   userPosition,
@@ -208,6 +224,7 @@ export const PilgrimMap: React.FC<Props> = ({
       attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
       maxZoom={19}
     />
+    <ResizeWhenShown active={active} />
     <MapController focus={focus} onViewChange={onViewChange} />
 
     {anchor && (
