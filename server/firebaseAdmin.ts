@@ -7,6 +7,8 @@ import { recordAuditEvent } from './audit';
 
 let firebaseAdminApp: App | null = null;
 let projectId = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0748280227';
+/** The named Firestore database the browser app uses (server/firestore.ts reads it). */
+let configuredFirestoreDatabaseId: string | null = null;
 
 // Attempt to load project config from firebase-applet-config.json
 try {
@@ -16,6 +18,9 @@ try {
     const parsed = JSON.parse(raw);
     if (parsed.projectId) {
       projectId = parsed.projectId;
+    }
+    if (typeof parsed.firestoreDatabaseId === 'string' && parsed.firestoreDatabaseId) {
+      configuredFirestoreDatabaseId = parsed.firestoreDatabaseId;
     }
   }
 } catch (e) {
@@ -250,4 +255,4 @@ function handleTestToken(token: string): { success: true; user: AuthenticatedUse
   };
 }
 
-export { firebaseAdminApp };
+export { firebaseAdminApp, projectId as firebaseProjectId, configuredFirestoreDatabaseId };

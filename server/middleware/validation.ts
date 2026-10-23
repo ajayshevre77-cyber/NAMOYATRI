@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { MOCK_TRANSPORT_OPTIONS, PICKUP_POINTS, DROP_POINTS, RIDE_POINT_AREAS } from '../../src/data/kumbhData';
 import { MAX_PASSENGERS, MAX_ADVANCE_BOOKING_DAYS, RideArea, areaOfPoint, maxPassengersFor } from '../../src/lib/fare';
-import { MAX_RIDE_PLACE_LABEL, RidePlace } from '../../src/lib/rides';
+import { MAX_RIDE_PLACE_LABEL, RidePlace, isClientRequestId } from '../../src/lib/rides';
 import { TransportOption } from '../../src/types';
 import { GeoPoint, isInServiceArea, SERVICE_AREA, NEARBY_RADII_M, DEFAULT_NEARBY_RADIUS_M } from '../../src/lib/geo';
 import { MAX_ROUTE_STOPS, MIN_ROUTE_STOPS, TravelMode, isTravelMode, roundRouteStop } from '../../src/lib/routing';
@@ -169,6 +169,8 @@ export interface ValidRideRequest {
   passengers: number;
   /** ISO string, or null for "leave now". */
   departAt: string | null;
+  /** The form's idempotency key, or null when the caller sent none (then a retry is a new request). */
+  clientRequestId: string | null;
 }
 
 /** Allowance for clock drift between the pilgrim's phone and the server. */
@@ -188,7 +190,7 @@ export function validateRideRequestBody(req: Request, res: Response, next: NextF
   }
 
   const { from, to, option } = parsed.trip;
-  const { passengers = 1, departAt = null } = req.body;
+  const { passengers = 1, departAt = null, clientRequestId = null } = req.body;
 
   if (!Number.isInteger(passengers) || passengers < 1 || passengers > MAX_PASSENGERS) {
     res.status(400).json({
@@ -229,7 +231,15 @@ export function validateRideRequestBody(req: Request, res: Response, next: NextF
     departAtIso = new Date(departMs).toISOString();
   }
 
-  const rideRequest: ValidRideRequest = { from, to, option, passengers, departAt: departAtIso };
+  if (clientRequestId !== null && !isClientRequestId(clientRequestId)) {
+    res.status(400).json({
+      error: 'clientRequestId must be 16 to 64 letters, digits, "-" or "_", or left out.',
+      code: 'INVALID_CLIENT_REQUEST_ID',
+    });
+    return;
+  }
+
+  const rideRequest: ValidRideRequest = { from, to, option, passengers, departAt: departAtIso, clientRequestId };
   res.locals.rideRequest = rideRequest;
   next();
 }

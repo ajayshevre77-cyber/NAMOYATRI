@@ -4,6 +4,97 @@ All notable changes to the Namo Yatri frontend.
 
 ---
 
+## 2026-10-23 (Demo ride requests can be saved in a database; "My demo requests" list)
+
+### What was wrong
+
+- **Ride requests vanished.** They were kept only in the server's memory, so
+  every restart lost them all. If the app ran on more than one server, each
+  one had a different list.
+- **You couldn't see your own requests.** Once the "Demo request recorded"
+  card was closed, there was no way back to it. The server could list your
+  requests, but no screen asked for them.
+- **A retry could save the same request twice.** If a request reached the
+  server but the reply got lost, trying again saved a second copy.
+- **Request numbers could repeat.** The internal ID was the current time, so
+  two requests in the same millisecond would clash. The reference shown to
+  people (e.g. NY-RD-8842) had only 4 random digits.
+- **The sample ride's time was a label** ("10 mins ago"), not a real time.
+
+### What's new
+
+- **Ride requests can be saved in Cloud Firestore**, the database the Firebase
+  project already has. A new setting chooses where requests go:
+  - `DATA_STORE=memory` keeps them in server memory, as before. It is still
+    the default, so nothing changes until someone switches it on.
+  - `DATA_STORE=firestore` saves them in the database, so they are kept
+    after a refresh, a restart, or on another server.
+- **If saving fails, the app says so.** The pilgrim sees "We could not
+  confirm that your demo ride request was saved. Please try again", never
+  "recorded". The server never quietly falls back to memory, and a mistyped
+  setting switches requests off rather than pretending to save them.
+- **"My demo requests" on the Travel tab**, below the form. It lists your own
+  requests, newest first: where from and to, when, ride type, passengers,
+  demo fare, reference and when you asked. It also:
+  - says on every list that nothing was dispatched;
+  - says whether the list will survive a server restart;
+  - tells guests that their requests stay with the guest session;
+  - reloads after each new request, and has Refresh and "Try again" buttons.
+- **Trying again never saves twice.** The form gives each request a one-off
+  key and sends the same key when the same request is retried. The server
+  then answers with the request it already saved, and the card says "Your
+  earlier attempt had already been saved". A key sent again with different
+  details is refused.
+- **Longer, random IDs.** References now look like NY-RD-K7QM-3XPA (no 0/O
+  or 1/I, so they can be read out over the phone).
+- Nobody can see someone else's requests, the server still sets the owner
+  and the fare, and all wording still says the request was not dispatched.
+
+### How it was checked
+
+- `npm run lint`: 0 errors. `npm run build`: succeeds. `git diff --check`:
+  clean.
+- A new test suite, `tests/store.test.ts`, passes **20 of 22**. The other
+  **2 were skipped, not passed**, because they need the Firestore emulator,
+  which isn't installed here. It checks:
+  - the same behaviour from the memory store and the database code: saving,
+    reading back exact times, own requests only, newest first, retries saved
+    once (including five at the same moment), reused keys refused, and
+    status changes kept;
+  - over the real API: retries, other users refused (403), no sign-in (401),
+    bad keys refused (400);
+  - failures: a refused, missing, slow or unreachable database gives 503 and
+    saves nothing, and a write that arrives late is not saved twice when the
+    pilgrim retries;
+  - a mistyped setting giving 503, and tests refusing to run against a real
+    database;
+  - logs that never contain key material.
+- **The database tests used a stand-in.** It copies the few database calls
+  the app makes, so it checks this app's code, not Firestore itself.
+  **Nothing was tested against real Firestore or the emulator**: there are
+  no Google credentials on this machine, and neither the emulator nor Java is
+  installed.
+- The built server was started in database mode against an address where
+  nothing answers. A request waited the 10-second limit, then got 503 instead
+  of a false "recorded".
+- Fourteen deliberate bugs were added one at a time; the tests caught every
+  one.
+- The other suites still pass unchanged: security **17/17**, rides **20/20**,
+  SOS hold **9/9**, map **23/23**, place search **15/15**, routing **16/16**,
+  trip planner **20/20**, Namo AI **19/19**.
+- **Not checked in a browser.** Seeing the list with requests in it needs a
+  real sign-in, which would create a user in the live Firebase project.
+
+### Still needed before switching the database on
+
+- Confirm that the named database exists, and create the three indexes in
+  `firestore.indexes.json`.
+- Give the server a service account with the "Cloud Datastore User" role.
+- Run the two emulator tests.
+
+The repository has no Firebase deploy settings, so the rules and indexes
+haven't been deployed, and nothing was written to the live database.
+
 ## 2026-10-21 (Request a demo ride from the map or a trip plan; Trimbak fares fixed)
 
 ### What was wrong

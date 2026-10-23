@@ -19,6 +19,46 @@ import { roundRouteStop } from './routing';
 /** Longest place name a ride request accepts, in characters. */
 export const MAX_RIDE_PLACE_LABEL = 120;
 
+/**
+ * A ride request's idempotency key. The form makes one per request and sends
+ * it again on a retry, so a request that reached the server before its reply
+ * was lost is saved once, not twice.
+ */
+export const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+
+export const isClientRequestId = (value: unknown): value is string =>
+  typeof value === 'string' && CLIENT_REQUEST_ID_PATTERN.test(value);
+
+/** 128 random bits as hex. getRandomValues, unlike randomUUID, also works on plain-http LAN addresses. */
+export function newClientRequestId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** A ride request being sent, with the key it goes out under. */
+export interface RideRequestAttempt {
+  /** The request as sent (without the key), serialised for comparison. */
+  request: string;
+  clientRequestId: string;
+}
+
+/**
+ * The attempt to send: the unconfirmed last one when the request is the same
+ * (a retry keeps its key, so the server saves it once), else a new key.
+ */
+export function rideRequestAttempt(request: unknown, last: RideRequestAttempt | null): RideRequestAttempt {
+  const serialised = JSON.stringify(request);
+  return last?.request === serialised ? last : { request: serialised, clientRequestId: newClientRequestId() };
+}
+
+/** The most requests GET /api/rides/my-rides returns (newest first). */
+export const MAX_LISTED_RIDES = 50;
+
+/** A request's departure for display: its scheduled time, or "Leave now". */
+export const departureLabel = (departAt: string | null) =>
+  departAt ? new Date(departAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Leave now';
+
 /** A pickup or destination picked on the map or in a trip plan. */
 export interface RidePlace {
   label: string;

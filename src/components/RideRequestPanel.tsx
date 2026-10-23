@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Info, MapPin, X } from 'lucide-react';
 import { TransportOption, RideBooking } from '../types';
 import { PICKUP_POINTS, DROP_POINTS } from '../data/kumbhData';
@@ -6,12 +6,14 @@ import { RideBookingCard, RideRequestDetails } from './RideBookingCard';
 import { useAuth, GuestContinuation } from '../context/AuthContext';
 import { secureFetch } from '../lib/api';
 import { demoDistanceBasis } from '../lib/fare';
-import { RideDraft } from '../lib/rides';
+import { RideDraft, RideRequestAttempt, departureLabel, rideRequestAttempt } from '../lib/rides';
 
 interface Props {
   transportOptions: TransportOption[];
   /** A pickup and destination handed over from the map or a trip plan. */
   draft?: RideDraft | null;
+  /** Called once a request is saved, so "My demo requests" can reload. */
+  onRequested?: () => void;
 }
 
 // Continuing as a guest from the sign-in popup submits the request at once,
@@ -30,11 +32,6 @@ function describeFailure(status: number, body: any): string {
   return 'That ride could not be requested. Please try again.';
 }
 
-const formatDeparture = (departAt: string | null) =>
-  departAt
-    ? new Date(departAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
-    : 'Leave now';
-
 /**
  * The one ride request flow, used by the Travel tab.
  *
@@ -42,34 +39,47 @@ const formatDeparture = (departAt: string | null) =>
  * recorded demo request, never as a confirmed or dispatched ride, because the
  * server only stores it: no driver or vehicle is sent.
  */
-export const RideRequestPanel: React.FC<Props> = ({ transportOptions, draft = null }) => {
+export const RideRequestPanel: React.FC<Props> = ({ transportOptions, draft = null, onRequested }) => {
   const { requireAuth } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [booking, setBooking] = useState<RideBooking | null>(null);
+  const [replayed, setReplayed] = useState(false);
+  // The request not yet confirmed. Sending the same details again reuses its
+  // key, so if an earlier attempt was saved before its reply was lost, the
+  // server answers with that ride instead of saving a second one.
+  const attempt = useRef<RideRequestAttempt | null>(null);
 
   const requestRide = async (details: RideRequestDetails) => {
     setSubmitting(true);
     setSubmitError(null);
+    // No fare is sent: the server prices the trip itself.
+    const request = {
+      from: details.from,
+      to: details.to,
+      transportType: details.transportType,
+      passengers: details.passengers,
+      departAt: details.departAt,
+    };
+    attempt.current = rideRequestAttempt(request, attempt.current);
+    const { clientRequestId } = attempt.current;
     try {
-      // No fare is sent: the server prices the trip itself.
       const res = await secureFetch('/api/rides/request', {
         method: 'POST',
-        body: JSON.stringify({
-          from: details.from,
-          to: details.to,
-          transportType: details.transportType,
-          passengers: details.passengers,
-          departAt: details.departAt,
-        }),
+        body: JSON.stringify({ ...request, clientRequestId }),
       });
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.success || !data.booking) {
+        // That key was used for other details; the next try gets a new one.
+        if (res.status === 409) attempt.current = null;
         setSubmitError(describeFailure(res.status, data));
         return;
       }
+      attempt.current = null;
       setBooking(data.booking);
+      setReplayed(data.replayed === true);
+      onRequested?.();
     } catch {
       setSubmitError('Could not reach the server. Check your connection and try again.');
     } finally {
@@ -131,6 +141,12 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions, draft = nu
         official transport service.
       </p>
 
+      {replayed && (
+        <p className="text-xs text-stone-600">
+          Your earlier attempt had already been saved, so this request was recorded once, not twice.
+        </p>
+      )}
+
       <div className="space-y-2 text-sm">
         <p className="flex items-start gap-2 text-stone-700">
           <MapPin className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" aria-hidden="true" />
@@ -155,7 +171,7 @@ export const RideRequestPanel: React.FC<Props> = ({ transportOptions, draft = nu
         </div>
         <div>
           <dt className="text-stone-500">When</dt>
-          <dd className="font-semibold text-stone-900">{formatDeparture(booking.departAt)}</dd>
+          <dd className="font-semibold text-stone-900">{departureLabel(booking.departAt)}</dd>
         </div>
         <div>
           <dt className="text-stone-500">Ride type</dt>

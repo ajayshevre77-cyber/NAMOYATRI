@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import path from 'path';
 import { timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
@@ -31,7 +31,6 @@ import {
   validatePassPurchaseBody,
   validateEmergencyReportBody,
   parseTripFields,
-  RidePlacePosition,
   ValidRideRequest,
   validateNearbyQuery,
   validateGeoSearchQuery,
@@ -44,7 +43,7 @@ import {
   ValidItineraryRequest,
   ValidChatRequest
 } from './server/middleware/validation';
-import { RideArea, estimateTrip } from './src/lib/fare';
+import { estimateTrip } from './src/lib/fare';
 import { findNearbyPlaces, searchPlaces, GeoServiceError } from './server/geo';
 import { getRoutingStatus, planRoute } from './server/routing';
 import { isGeminiConfigured } from './server/gemini';
@@ -52,6 +51,19 @@ import { generateItinerary, getItineraryStatus } from './server/itinerary';
 import { answerChat } from './server/chat';
 import { recordAuditEvent, getAuditLogs } from './server/audit';
 import { assignUserRoleServerSide, resolveServerRoleAndStatus } from './server/firebaseAdmin';
+import {
+  CreateRideResult,
+  IdempotencyConflictError,
+  MAX_LISTED_RIDES,
+  RideRecord,
+  StorageUnavailableError,
+  getRideStore,
+  newBookingRef,
+  newRideId,
+  rideIdempotencyKey,
+  rideRequestFingerprint,
+  rideStorageInfo,
+} from './server/store';
 
 dotenv.config();
 
@@ -107,38 +119,9 @@ const itineraryLimiter = createRateLimiter({
 // -------------------------------------------------------------
 // IN-MEMORY DEMO STORES
 // [DEMO STORAGE]: In-memory storage for demonstration prototype.
-// In full production, all records persist directly via Firebase Admin SDK to Cloud Firestore.
+// Ride requests have moved to server/store (memory or Firestore, chosen by
+// DATA_STORE); everything below is still lost when the server restarts.
 // -------------------------------------------------------------
-
-interface RideRecord {
-  id: string;
-  bookingRef: string;
-  userId: string;
-  driverId?: string;
-  fromLocation: string;
-  toLocation: string;
-  transportType: string;
-  passengers: number;
-  /** ISO time of a scheduled ride; null means leave now. */
-  departAt: string | null;
-  /** Where pickup and destination are, when they were places from the map or a trip plan; null for a fixed demo point. */
-  fromPlace: RidePlacePosition | null;
-  toPlace: RidePlacePosition | null;
-  fromArea: RideArea;
-  toArea: RideArea;
-  /** The fixed demo distance for this kind of trip (src/lib/fare.ts), not a measured one. */
-  distanceKm: number;
-  distanceBasis: 'DEMO_AREA_DISTANCE';
-  estimatedFare: number;
-  estimatedTimeMins: number;
-  fareBasis: 'DEMO_ESTIMATE';
-  status: 'requested' | 'driver_assigned' | 'in_transit' | 'completed' | 'cancelled';
-  /** Nothing leaves this server: no real driver or vehicle is ever dispatched. */
-  dispatchStatus: 'DEMO_NOT_DISPATCHED';
-  createdAt: string;
-  paymentMethod: string;
-  sourceType: 'DEMO';
-}
 
 interface PassRecord {
   id: string;
@@ -280,34 +263,6 @@ const lostItemCases: LostItemRecord[] = [
   },
 ];
 
-const rideBookings: RideRecord[] = [
-  {
-    id: 'bk_001',
-    bookingRef: 'NY-RD-8842',
-    userId: 'usr_demo_driver_01',
-    driverId: 'drv_01',
-    fromLocation: 'Nashik Road Railway Station',
-    toLocation: 'Ramkund Panchavati',
-    transportType: 'electric_shuttle',
-    passengers: 1,
-    departAt: null,
-    fromPlace: null,
-    toPlace: null,
-    fromArea: 'nashik',
-    toArea: 'nashik',
-    distanceKm: 8.4,
-    distanceBasis: 'DEMO_AREA_DISTANCE',
-    estimatedFare: 15,
-    estimatedTimeMins: 22,
-    fareBasis: 'DEMO_ESTIMATE',
-    status: 'driver_assigned',
-    dispatchStatus: 'DEMO_NOT_DISPATCHED',
-    createdAt: '10 mins ago',
-    paymentMethod: 'pass',
-    sourceType: 'DEMO',
-  },
-];
-
 /**
  * Owner of seeded sample records. No sign-in ever resolves to this ID, so the
  * samples are never returned as anybody's own data.
@@ -350,7 +305,7 @@ let fraudAlertsState = [...MOCK_FRAUD_ALERTS];
 // =============================================================
 
 // Health & System Metadata
-app.get('/api/health', publicLimiter, (req: Request, res: Response) => {
+app.get('/api/health', publicLimiter, async (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'Namo Yatri Security-Hardened API',
@@ -359,6 +314,8 @@ app.get('/api/health', publicLimiter, (req: Request, res: Response) => {
     aiIntegrated: isGeminiConfigured(),
     firebaseAuthEnforced: true,
     rbacServerEnforced: true,
+    // Where ride requests are kept; never any credential or database detail.
+    storage: { rides: rideStorageInfo(await getRideStore()) },
     version: '1.1.0-hardened',
   });
 });
@@ -784,16 +741,50 @@ app.post('/api/passes/purchase', bookingLimiter, requireAuth, validatePassPurcha
 // 4. AUTHENTICATED RIDES & TRANSPORT (IDOR PROTECTED)
 // =============================================================
 
-// Fetch rides belonging to the authenticated user
-app.get('/api/rides/my-rides', bookingLimiter, requireAuth, (req: AuthenticatedRequest, res: Response) => {
-  const user = req.user!;
-  const myRides = rideBookings.filter(r => r.userId === user.uid);
-  res.json({ rides: myRides });
+const RIDE_SAVE_FAILED =
+  'We could not confirm that your demo ride request was saved. Please try again: trying again will not create a duplicate.';
+
+/**
+ * 503 STORAGE_UNAVAILABLE when the ride store failed (a request is then never
+ * reported as saved), 409 for a clientRequestId reused for a different ride.
+ * Anything else is a bug and goes to the error handler.
+ */
+function sendRideStoreError(res: Response, next: NextFunction, err: unknown, message: string): void {
+  if (err instanceof StorageUnavailableError) {
+    res.status(503).json({ error: message, code: 'STORAGE_UNAVAILABLE' });
+    return;
+  }
+  if (err instanceof IdempotencyConflictError) {
+    res.status(409).json({
+      error: 'This request was already sent with different details. Please submit the form again.',
+      code: 'IDEMPOTENCY_KEY_REUSED',
+    });
+    return;
+  }
+  next(err);
+}
+
+// The authenticated user's own ride requests, newest first. `storage` says
+// whether they survive a server restart, so the app can say so.
+app.get('/api/rides/my-rides', bookingLimiter, requireAuth, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const store = await getRideStore();
+    const rides = await store.listRidesForUser(req.user!.uid, MAX_LISTED_RIDES);
+    res.json({ rides, storage: rideStorageInfo(store) });
+  } catch (err) {
+    sendRideStoreError(res, next, err, 'Your demo ride requests could not be loaded right now. Please try again.');
+  }
 });
 
 // Get ride by ID with ownership verification
-app.get('/api/rides/:rideId', bookingLimiter, requireAuth, validateIdParam('rideId'), (req: AuthenticatedRequest, res: Response) => {
-  const ride = rideBookings.find(r => r.id === req.params.rideId);
+app.get('/api/rides/:rideId', bookingLimiter, requireAuth, validateIdParam('rideId'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  let ride: RideRecord | null;
+  try {
+    ride = await (await getRideStore()).getRide(req.params.rideId);
+  } catch (err) {
+    sendRideStoreError(res, next, err, 'This demo ride request could not be loaded right now. Please try again.');
+    return;
+  }
   if (!ride) {
     res.status(404).json({ error: 'Ride booking not found' });
     return;
@@ -816,15 +807,17 @@ app.get('/api/rides/:rideId', bookingLimiter, requireAuth, validateIdParam('ride
 
 // Request Ride - binds strictly to req.user.uid.
 // The fare is computed here; any fare in the body is ignored. The request is
-// only recorded in this demo store: no driver or vehicle is dispatched.
-app.post('/api/rides/request', bookingLimiter, requireAuth, rejectSuspendedAccount, validateRideRequestBody, (req: AuthenticatedRequest, res: Response) => {
+// only recorded in the demo store: no driver or vehicle is dispatched.
+// A retry with the same clientRequestId returns the ride saved the first time.
+app.post('/api/rides/request', bookingLimiter, requireAuth, rejectSuspendedAccount, validateRideRequestBody, async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const user = req.user!;
-  const { from, to, option, passengers, departAt } = res.locals.rideRequest as ValidRideRequest;
+  const rideRequest = res.locals.rideRequest as ValidRideRequest;
+  const { from, to, option, passengers, departAt, clientRequestId } = rideRequest;
   const estimate = estimateTrip(option, from.area, to.area);
 
   const newRide: RideRecord = {
-    id: 'bk_' + Date.now(),
-    bookingRef: 'NY-RD-' + Math.floor(1000 + Math.random() * 9000),
+    id: newRideId(),
+    bookingRef: newBookingRef(),
     userId: user.uid, // Strictly bound to authenticated UID
     fromLocation: from.label,
     toLocation: to.label,
@@ -847,37 +840,64 @@ app.post('/api/rides/request', bookingLimiter, requireAuth, rejectSuspendedAccou
     sourceType: 'DEMO',
   };
 
-  rideBookings.unshift(newRide);
+  let saved: CreateRideResult;
+  try {
+    saved = await (await getRideStore()).createRide(
+      newRide,
+      clientRequestId
+        ? { key: rideIdempotencyKey(user.uid, clientRequestId), fingerprint: rideRequestFingerprint(rideRequest) }
+        : null,
+    );
+  } catch (err) {
+    sendRideStoreError(res, next, err, RIDE_SAVE_FAILED);
+    return;
+  }
 
-  recordAuditEvent({
-    actorId: user.uid,
-    actorRole: user.role,
-    action: 'REQUEST_TRANSPORT',
-    targetId: newRide.id,
-    details: `Transport requested: ${newRide.transportType} for ${passengers} from ${newRide.fromLocation} to ${newRide.toLocation}, ${departAt ? `scheduled ${departAt}` : 'leaving now'}`,
-    ipAddress: req.ip,
-  });
+  // A repeat of a request already saved changes nothing, so it is not audited again.
+  if (!saved.replayed) {
+    recordAuditEvent({
+      actorId: user.uid,
+      actorRole: user.role,
+      action: 'REQUEST_TRANSPORT',
+      targetId: saved.ride.id,
+      details: `Transport requested: ${saved.ride.transportType} for ${passengers} from ${saved.ride.fromLocation} to ${saved.ride.toLocation}, ${departAt ? `scheduled ${departAt}` : 'leaving now'}`,
+      ipAddress: req.ip,
+    });
+  }
 
   res.json({
     success: true,
-    booking: newRide,
+    booking: saved.ride,
+    ...(saved.replayed ? { replayed: true } : {}),
     notice: 'Demo request recorded. No driver or vehicle has been dispatched.',
   });
 });
 
 // Driver-Restricted: get assigned rides
-app.get('/api/driver/assigned-rides', bookingLimiter, requireAuth, requireRole('DRIVER', 'ADMIN', 'OPERATIONS'), (req: AuthenticatedRequest, res: Response) => {
+app.get('/api/driver/assigned-rides', bookingLimiter, requireAuth, requireRole('DRIVER', 'ADMIN', 'OPERATIONS'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const user = req.user!;
   // Return rides assigned to this driver or pending dispatch
-  const assigned = rideBookings.filter(r => r.driverId === user.uid || (user.role === 'ADMIN' && r.status === 'requested'));
-  res.json({ rides: assigned });
+  try {
+    const assigned = await (await getRideStore()).listRidesForDriver(user.uid, user.role === 'ADMIN', MAX_LISTED_RIDES);
+    res.json({ rides: assigned });
+  } catch (err) {
+    sendRideStoreError(res, next, err, 'Rides could not be loaded right now. Please try again.');
+  }
 });
 
 // Driver-Restricted: update assigned ride status
-app.post('/api/driver/rides/:rideId/status', bookingLimiter, requireAuth, requireRole('DRIVER', 'ADMIN', 'OPERATIONS'), validateIdParam('rideId'), (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/driver/rides/:rideId/status', bookingLimiter, requireAuth, requireRole('DRIVER', 'ADMIN', 'OPERATIONS'), validateIdParam('rideId'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const user = req.user!;
   const { status } = req.body;
-  const ride = rideBookings.find(r => r.id === req.params.rideId);
+  const store = await getRideStore();
+
+  let ride: RideRecord | null;
+  try {
+    ride = await store.getRide(req.params.rideId);
+  } catch (err) {
+    sendRideStoreError(res, next, err, 'The ride could not be loaded right now. Please try again.');
+    return;
+  }
 
   if (!ride) {
     res.status(404).json({ error: 'Ride not found' });
@@ -899,18 +919,28 @@ app.post('/api/driver/rides/:rideId/status', bookingLimiter, requireAuth, requir
     return;
   }
 
-  ride.status = status;
+  let updated: RideRecord | null;
+  try {
+    updated = await store.updateRideStatus(ride.id, status);
+  } catch (err) {
+    sendRideStoreError(res, next, err, 'The ride status could not be saved. Please try again.');
+    return;
+  }
+  if (!updated) {
+    res.status(404).json({ error: 'Ride not found' });
+    return;
+  }
 
   recordAuditEvent({
     actorId: user.uid,
     actorRole: user.role,
     action: 'DRIVER_UPDATED_RIDE_STATUS',
-    targetId: ride.id,
-    details: `Driver updated ride ${ride.bookingRef} status to ${status}`,
+    targetId: updated.id,
+    details: `Driver updated ride ${updated.bookingRef} status to ${status}`,
     ipAddress: req.ip,
   });
 
-  res.json({ success: true, ride });
+  res.json({ success: true, ride: updated });
 });
 
 // =============================================================
@@ -1351,6 +1381,8 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'test') {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[Namo Yatri] Core server running on http://0.0.0.0:${PORT}`);
+      // Choose the ride store now, so its log line says where requests are kept.
+      void getRideStore();
     });
   }
 }

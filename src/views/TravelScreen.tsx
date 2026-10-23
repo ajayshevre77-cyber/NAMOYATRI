@@ -1,9 +1,10 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, MapPin } from 'lucide-react';
 import { SupportedLanguage, translations } from '../i18n';
 import { TransportOption } from '../types';
 import { PlaceholderNotice } from '../components/PlaceholderNotice';
 import { RideRequestPanel } from '../components/RideRequestPanel';
+import { MyRideRequests } from '../components/MyRideRequests';
 import { AdPanel } from '../components/AdPanel';
 import { RideDraft } from '../lib/rides';
 import type { MapJump } from './MapScreen';
@@ -36,6 +37,8 @@ export const TravelScreen: React.FC<Props> = ({
   onReturnToMap,
 }) => {
   const t = translations[currentLanguage];
+  // Bumped when a request is saved, so "My demo requests" reloads.
+  const [savedRequests, setSavedRequests] = useState(0);
 
   // A new hand-over: bring it into view and move focus there, since the
   // pilgrim arrives from further down a long map page.
@@ -131,7 +134,13 @@ export const TravelScreen: React.FC<Props> = ({
         </section>
       )}
 
-      <RideRequestPanel transportOptions={transportOptions} draft={rideDraft} />
+      <RideRequestPanel
+        transportOptions={transportOptions}
+        draft={rideDraft}
+        onRequested={() => setSavedRequests((n) => n + 1)}
+      />
+
+      <MyRideRequests transportOptions={transportOptions} refreshKey={savedRequests} />
 
       {/* Mobility Pass Upsell Banner */}
       <div className="p-3.5 bg-gradient-to-r from-emerald-800 to-teal-900 text-white rounded-2xl flex items-center justify-between gap-3 shadow-xs">

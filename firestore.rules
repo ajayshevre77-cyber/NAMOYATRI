@@ -162,6 +162,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Ride requests and their idempotency keys (server/store/firestoreStore.ts).
+    // Only the API server uses these, through the Admin SDK, which bypasses
+    // these rules. Browsers are refused, so nobody can write their own fare,
+    // owner or status. (The default deny above already covers this.)
+    match /rideRequests/{rideId} {
+      allow read, write: if false;
+    }
+    match /rideRequestKeys/{keyId} {
+      allow read, write: if false;
+    }
+
     // Collection: Bookings
     match /bookings/{bookingId} {
       allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin() || isOperations());
